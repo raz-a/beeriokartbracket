@@ -1,8 +1,6 @@
 // TODO: Remove this
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-
 use slotmap::{SlotMap, new_key_type};
 
 // Tournament top-level
@@ -23,6 +21,7 @@ pub enum TournamentError {
     NonExistantParticipant,
     RaceIsFull,
     ParticipantAlreadyInRace,
+    InvalidPlacementValue,
 }
 
 #[derive(Debug, Default)]
@@ -60,26 +59,25 @@ impl Participant {
 
 const MAX_RACERS: usize = 8;
 
-pub enum Placement {
-    First,
-    Second,
-    Third,
-    Fourth,
-    Fifth,
-    Sixth,
-    Seventh,
-    Eigth,
-}
+pub struct Placement(u8);
 
 impl Placement {
-    fn get_points(&self) -> u32 {
+    pub fn new(val: u8) -> Result<Self, TournamentError> {
+        if val == 0 || val > MAX_RACERS as u8 {
+            return Err(TournamentError::InvalidPlacementValue);
+        }
+
+        Ok(Placement(val))
+    }
+
+    pub fn get_points(&self) -> u32 {
         todo!("Use a config to determine point distribution");
     }
 }
 
 #[derive(Default)]
 pub struct Race {
-    racers: HashMap<ParticipantId, Option<Placement>>,
+    racers: Vec<(ParticipantId, Option<Placement>)>,
 }
 
 impl Race {
@@ -88,19 +86,20 @@ impl Race {
             return Err(TournamentError::RaceIsFull);
         }
 
-        if self.racers.contains_key(&racer) {
+        if self.racers.iter().find(|(r, _)| *r == racer).is_some() {
             return Err(TournamentError::ParticipantAlreadyInRace);
         }
 
-        self.racers.insert(racer, None);
+        self.racers.push((racer, None));
         Ok(())
     }
 
     pub fn remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
-        if self.racers.remove(&racer).is_none() {
-            Err(TournamentError::NonExistantParticipant)
-        } else {
+        if let Some(idx) = self.racers.iter().position(|(r, _)| *r == racer) {
+            self.racers.remove(idx);
             Ok(())
+        } else {
+            Err(TournamentError::NonExistantParticipant)
         }
     }
 
@@ -109,8 +108,12 @@ impl Race {
         racer: ParticipantId,
         place: Placement,
     ) -> Result<(), TournamentError> {
-        if let Some(racer_place) = self.racers.get_mut(&racer) {
-            *racer_place = Some(place);
+        if place.0 > self.racers.len() as u8 {
+            return Err(TournamentError::InvalidPlacementValue);
+        }
+
+        if let Some((_, p)) = self.racers.iter_mut().find(|(r, _)| *r == racer) {
+            *p = Some(place);
             Ok(())
         } else {
             Err(TournamentError::NonExistantParticipant)
@@ -118,13 +121,7 @@ impl Race {
     }
 
     pub fn is_complete(&self) -> bool {
-        for racer_place in self.racers.values() {
-            if racer_place.is_none() {
-                return false;
-            }
-        }
-
-        true
+        !self.racers.is_empty() && self.racers.iter().all(|(_, p)| p.is_some())
     }
 }
 

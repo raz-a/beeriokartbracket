@@ -7,9 +7,16 @@ tournament the maintainer hosts. It tracks participants, generates and manages
 tournament brackets, and records race/round results. It is both a real tool and
 a deliberate learning project.
 
-Current state: early scaffold. `src/main.rs` is still `Hello, world!`,
-`Cargo.toml` has no dependencies, edition 2024. Everything under "Domain model"
-and "UI" below is **planned**, not yet implemented.
+Current state: past the initial scaffold. The crate is split into a library
+(`src/lib.rs`, all domain logic) and a thin binary (`src/main.rs`) — see
+"Architecture (current)" below. `Cargo.toml` is edition 2024 and depends on
+`slotmap`. Implemented so far: the `Tournament` top-level type, a runtime
+`TournamentPhase` state machine (Registration → Pools → Bracket → Complete), a
+`Registration` capability handle for phase-gated participant editing, and
+`Participant` (name + seed) stored in a `SlotMap` keyed by `ParticipantId`. Still
+**planned, not yet implemented**: races, pools, bracket/rounds, point
+distribution, tests, and the entire UI. A `#![allow(dead_code)]` (with a TODO) is
+in place while the model is incomplete.
 
 ## How to work in this repo (read this first)
 
@@ -35,6 +42,30 @@ generator.
 - **Surface design decisions explicitly** and let the maintainer choose. Present
   options with trade-offs rather than silently picking one.
 
+## Architecture (current)
+
+Decisions already made and reflected in the code — build on these rather than
+re-deriving or second-guessing them:
+
+- **Library + thin binary.** All domain logic lives in the `beeriokartbracket`
+  library (`src/lib.rs`) and stays UI-independent so it is unit- and
+  integration-testable. `src/main.rs` is a thin shell that drives the library.
+  Any GUI toolkit belongs in the binary's dependencies, never the library's.
+- **ID handles over owning references.** Entities live in `slotmap` tables and
+  are referenced elsewhere by generational key (e.g. `ParticipantId`), not by
+  owned values or `Rc<RefCell<…>>`. This is the "handle table" model: one source
+  of truth per entity, IDs held everywhere else. Don't, for example, store a
+  `Vec<Race>` on `Participant`; derive such relationships from the race tables.
+- **Runtime phase state machine.** `TournamentPhase` is a runtime enum field on
+  `Tournament`, deliberately *not* a compile-time typestate, because the
+  tournament is a single stored/serializable value driven by user actions.
+- **Capability handles for phase-gated operations.** Rather than a phase check in
+  every method, `Tournament` hands out a borrow-scoped handle (e.g.
+  `get_registration() -> Option<Registration<'_>>`) that only exists in the
+  correct phase, so the check lives in one place. Transitions consume the handle
+  (`Registration::start(self)`) so using it after a transition is a compile
+  error.
+
 ## Domain model (planned)
 
 The core logic should be UI-independent and thoroughly unit-testable. Key concepts:
@@ -51,6 +82,21 @@ The core logic should be UI-independent and thoroughly unit-testable. Key concep
   race-size *category*, not the literal player count.
 - **Point distribution** — configurable points awarded per placement, aggregated
   across the races in a round to determine round placement.
+
+### Initial version (v1) assumptions
+
+The broader model in this document is the long-term target. **The first version
+deliberately hard-codes the simplifications below.** Treat them as invariants for
+now, but keep the code structured so each can be relaxed later without a rewrite
+(e.g. don't scatter the literal `8` everywhere — funnel it through one place).
+
+1. **Race sizes are fixed.** Every race is an **8-player** race, *except* the
+   **grand finals** of the bracket, which is a **4-player** race. The general
+   8/4/2 bucketing described above is not exercised in v1.
+2. **Brackets are always double elimination.** Single elimination is not
+   selectable in v1 (bottom half always drops into the losers' bracket).
+3. **Phases are fixed and linear:** Registration → Pools → Bracket → Complete.
+   Every tournament advances through all four, in that order.
 
 ### Tournament formats
 

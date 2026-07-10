@@ -59,6 +59,7 @@ impl Participant {
 
 const MAX_RACERS: usize = 8;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Placement(u8);
 
 impl Placement {
@@ -75,7 +76,7 @@ impl Placement {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Race {
     racers: Vec<(ParticipantId, Option<Placement>)>,
 }
@@ -86,7 +87,7 @@ impl Race {
             return Err(TournamentError::RaceIsFull);
         }
 
-        if self.racers.iter().find(|(r, _)| *r == racer).is_some() {
+        if self.racers.iter().any(|(r, _)| *r == racer) {
             return Err(TournamentError::ParticipantAlreadyInRace);
         }
 

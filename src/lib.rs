@@ -14,6 +14,7 @@ pub enum TournamentPhase {
     Complete,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum TournamentError {
     InvalidPhase,
 }
@@ -25,21 +26,16 @@ pub struct Tournament {
 }
 
 impl Tournament {
-    pub fn registration(&mut self) -> Option<Registration<'_>> {
+    pub fn get_registration(&mut self) -> Option<Registration<'_>> {
         matches!(self.phase, TournamentPhase::Registration).then(|| Registration { tourney: self })
-    }
-
-    pub fn start(&mut self) -> Result<(), TournamentError> {
-        if self.registration().is_some() {
-            self.phase = TournamentPhase::Pools;
-            return Ok(());
-        }
-
-        Err(TournamentError::InvalidPhase)
     }
 }
 
-// Registration logic
+// Registration Phase
+
+pub struct Registration<'a> {
+    tourney: &'a mut Tournament,
+}
 
 impl Registration<'_> {
     pub fn add_participant(&mut self, name: &str, seed: u32) -> ParticipantId {
@@ -50,6 +46,10 @@ impl Registration<'_> {
 
     pub fn remove_participant(&mut self, id: ParticipantId) {
         self.tourney.participants.remove(id);
+    }
+
+    pub fn start(self) {
+        self.tourney.phase = TournamentPhase::Pools;
     }
 }
 
@@ -70,8 +70,4 @@ impl Participant {
             seed,
         }
     }
-}
-
-pub struct Registration<'a> {
-    tourney: &'a mut Tournament,
 }

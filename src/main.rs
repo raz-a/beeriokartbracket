@@ -5,7 +5,7 @@ fn main() {
 
     if let Some(mut r) = t.get_registration() {
         r.add_participant("Tony", 0);
-        r.start();
+        r.start().unwrap();
     }
 
     println!("{:?}", t);

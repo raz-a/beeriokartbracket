@@ -17,6 +17,7 @@ pub enum TournamentPhase {
 #[derive(Debug, PartialEq)]
 pub enum TournamentError {
     InvalidPhase,
+    NoParticipants,
 }
 
 #[derive(Debug, Default)]
@@ -48,8 +49,13 @@ impl Registration<'_> {
         self.tourney.participants.remove(id);
     }
 
-    pub fn start(self) {
-        self.tourney.phase = TournamentPhase::Pools;
+    pub fn start(self) -> Result<(), TournamentError> {
+        if self.tourney.participants.is_empty() {
+            Err(TournamentError::NoParticipants)
+        } else {
+            self.tourney.phase = TournamentPhase::Pools;
+            Ok(())
+        }
     }
 }
 

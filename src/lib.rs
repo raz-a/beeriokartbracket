@@ -155,3 +155,36 @@ impl Registration<'_> {
         }
     }
 }
+
+// Pool Logic
+
+#[derive(Debug)]
+pub struct PoolParticipant {
+    id: ParticipantId,
+    race_count: u32,
+    total_score: u32,
+}
+
+impl PoolParticipant {
+    pub fn new(id: ParticipantId) -> Self {
+        Self {
+            id: id,
+            race_count: 0,
+            total_score: 0,
+        }
+    }
+
+    pub fn record_result(&mut self, score: u32) {
+        self.total_score += score;
+        self.race_count += 1;
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct Pool {
+    participants: Vec<PoolParticipant>,
+}
+
+impl Pool {
+    //pub fn add_participants(&mut self, participants: Vec<ParticipantId>
+}

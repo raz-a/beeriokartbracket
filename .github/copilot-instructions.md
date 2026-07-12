@@ -5,7 +5,9 @@
 A Rust application to run the **Beerio Kart Invitational**, an annual Mario Kart
 tournament the maintainer hosts. It tracks participants, generates and manages
 tournament brackets, and records race/round results. It is both a real tool and
-a deliberate learning project.
+a deliberate learning project. The official rules for the current event live in
+`docs/Rules_Brackets.md`; see "Tournament rules" below for the concrete format
+the tool must run.
 
 Current state: past the initial scaffold. The crate is split into a library
 (`src/lib.rs`, all domain logic) and a thin binary (`src/main.rs`) — see
@@ -81,7 +83,12 @@ The core logic should be UI-independent and thoroughly unit-testable. Key concep
   the **top half advances and the bottom half drops**, where "half" is by the
   race-size *category*, not the literal player count.
 - **Point distribution** — configurable points awarded per placement, aggregated
-  across the races in a round to determine round placement.
+  across the races in a round to determine round placement. The concrete v1
+  default (8-player race) is 8 points for 1st down to 1 for 8th; see "Tournament
+  rules".
+- **Ruleset** — a per-race axis orthogonal to race size: **Vanilla** or **Beerio
+  Kart**. Only Beerio's finish-before-you-drink penalty affects scoring; see
+  "Tournament rules".
 
 ### Initial version (v1) assumptions
 
@@ -90,13 +97,21 @@ deliberately hard-codes the simplifications below.** Treat them as invariants fo
 now, but keep the code structured so each can be relaxed later without a rewrite
 (e.g. don't scatter the literal `8` everywhere — funnel it through one place).
 
-1. **Race sizes are fixed.** Every race is an **8-player** race, *except* the
-   **grand finals** of the bracket, which is a **4-player** race. The general
-   8/4/2 bucketing described above is not exercised in v1.
+1. **Race sizes are fixed.** Every non-bracket-endgame race is an **8-player**
+   race; the general 8/4/2 bucketing described above is not exercised in v1. The
+   bracket's endgame is **not** a single 4-player final — it is the lives-based
+   **Grand Finals Gauntlet** exactly as specified in `docs/Rules_Brackets.md`
+   (see "Tournament rules").
 2. **Brackets are always double elimination.** Single elimination is not
    selectable in v1 (bottom half always drops into the losers' bracket).
 3. **Phases are fixed and linear:** Registration → Pools → Bracket → Complete.
    Every tournament advances through all four, in that order.
+
+These v1 simplifications predate `docs/Rules_Brackets.md`. Where the concrete
+rules go beyond a simplification (the pools bucket qualifier, 6–8-player pool
+races), treat the rules doc as authoritative and confirm with the maintainer how
+much of it v1 should actually implement. The **Grand Finals Gauntlet** is not
+optional — it is the correct, intended bracket endgame.
 
 ### Tournament formats
 
@@ -113,6 +128,69 @@ now, but keep the code structured so each can be relaxed later without a rewrite
 Model these formats and stages so they compose (e.g. a pools stage feeding a
 single- or double-elimination bracket). Rust enums + pattern matching are a
 natural fit; discuss the state-machine shape before locking in a data model.
+
+## Tournament rules (authoritative: docs/Rules_Brackets.md)
+
+`docs/Rules_Brackets.md` holds the official rules for the **4th Annual
+Northwestern Beerio Kart Invitational** and is the source of truth for the
+concrete event format. The abstract model above is the long-term generalization;
+the rules below are what the tool must actually run. When they conflict, prefer
+the rules doc and surface the difference to the maintainer.
+
+### Rulesets (a per-race axis)
+
+Every race uses one of two **rulesets**, orthogonal to race size:
+
+- **Vanilla Mario Kart** — standard race (150cc, recommended items/laps, random
+  course).
+- **Beerio Kart** — Vanilla plus drinking rules. The only rule that touches
+  *scoring* is the penalty: **a racer who finishes the race before completing
+  their drink is forced to 8th place (1 point)**. Model this as a per-result
+  override, not a distinct race type. The "beer zone" / no-drink-and-drive rules
+  are physical and have no data-model impact.
+
+### Point distribution (concrete default)
+
+8-player placement points, 1st → 8th: **8, 7, 6, 5, 4, 3, 2, 1**. This is the
+concrete instance of the "configurable point distribution" concept — keep it
+configurable, ship these as the default.
+
+### Pools (bucket qualifier)
+
+Not the generic "everyone plays X games" model — a specific bucket algorithm:
+
+- **9 buckets**, indexed by *races completed* (0 through 8); everyone starts in
+  bucket 0 after registration.
+- Repeatedly draw racers from the **lowest non-empty bucket** for a single race
+  (**6-, 7-, or 8-player** depending on registration count), award points by
+  placement, then move those racers up one bucket.
+- **Even buckets use Beerio, odd buckets use Vanilla.**
+- Continue until every racer is in the "8 races" bucket.
+- The **top 16 total scores** advance to the bracket. Ties are broken by an
+  extra **Vanilla** race.
+
+### Bracket (16 racers, double elimination)
+
+- The top 16 seed a **double-elimination** bracket.
+- Each **heat = 3 races**: race 1 Vanilla, race 2 Beerio, race 3 Vanilla. Points
+  accumulate across all three — this is the "round = one or more races" concept.
+- **Top 4 of the 8** in a heat advance. The other 4 drop to the losers' bracket
+  (from a winners' heat) or are eliminated (from a losers' heat).
+- A tie after 3 races is broken by a 4th **Vanilla** race.
+- Runs until **4 racers remain in each of the winners' and losers' brackets** (8
+  total), who feed the Grand Finals Gauntlet.
+
+### Grand Finals Gauntlet
+
+A lives-based elimination, not a single 4-player final:
+
+- Starting **lives**: winners'-bracket racers get **6**, losers'-bracket racers
+  get **3**.
+- Back-to-back races; racers finishing in the **bottom half (rounding up)** lose
+  **1 life**. Zero lives ⇒ eliminated.
+- Once **4 racers remain**, races move to a single screen.
+- **Every 3rd race uses Beerio**; the rest are Vanilla.
+- Continues until **one racer remains** (the champion).
 
 ## UI (planned, framework not yet chosen)
 

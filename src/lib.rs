@@ -11,6 +11,7 @@ pub enum TournamentPhase {
     Registration,
     Pools,
     Bracket,
+    Gauntlet,
     Complete,
 }
 
@@ -72,16 +73,27 @@ impl Placement {
     }
 
     pub fn get_points(&self) -> u32 {
-        todo!("Use a config to determine point distribution");
+        9 - self.0 as u32
     }
+}
+#[derive(Debug, Default)]
+pub enum RaceRuleset {
+    #[default]
+    Vanilla,
+    Beerio,
 }
 
 #[derive(Debug, Default)]
 pub struct Race {
     racers: Vec<(ParticipantId, Option<Placement>)>,
+    ruleset: RaceRuleset,
 }
 
 impl Race {
+    pub fn set_ruleset(&mut self, ruleset: RaceRuleset) {
+        self.ruleset = ruleset;
+    }
+
     pub fn add_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
         if self.racers.len() >= MAX_RACERS {
             return Err(TournamentError::RaceIsFull);
@@ -159,32 +171,25 @@ impl Registration<'_> {
 // Pool Logic
 
 #[derive(Debug)]
-pub struct PoolParticipant {
-    id: ParticipantId,
-    race_count: u32,
-    total_score: u32,
-}
-
-impl PoolParticipant {
-    pub fn new(id: ParticipantId) -> Self {
-        Self {
-            id: id,
-            race_count: 0,
-            total_score: 0,
-        }
-    }
-
-    pub fn record_result(&mut self, score: u32) {
-        self.total_score += score;
-        self.race_count += 1;
-    }
-}
-
-#[derive(Default, Debug)]
 pub struct Pool {
-    participants: Vec<PoolParticipant>,
+    buckets: Box<[Vec<ParticipantId>]>,
+    races: Vec<Race>,
 }
 
 impl Pool {
-    //pub fn add_participants(&mut self, participants: Vec<ParticipantId>
+    pub fn new(race_count: usize) -> Self {
+        Self::new_with_participants(race_count, &[])
+    }
+
+    pub fn new_with_participants(race_count: usize, participants: &[ParticipantId]) -> Self {
+        // The number of races determines the number of buckets.
+        let mut pool = Self {
+            buckets: vec![vec![]; race_count + 1].into_boxed_slice(),
+            races: vec![],
+        };
+
+        // Put all racers in the first bucket.
+        pool.buckets[0].extend_from_slice(participants);
+        pool
+    }
 }

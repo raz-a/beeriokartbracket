@@ -1,6 +1,10 @@
 // TODO: Remove this
 #![allow(dead_code)]
 
+// TODO: Split into multiple files.
+// TODO: Add tests.
+// TODO: Connect Pools logic to tournamet.
+
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};

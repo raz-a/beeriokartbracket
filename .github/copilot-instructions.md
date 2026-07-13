@@ -13,7 +13,8 @@ Current state: past the initial scaffold. The crate is split into a library
 (`src/lib.rs`, all domain logic) and a thin binary (`src/main.rs`) — see
 "Architecture (current)" below. `Cargo.toml` is edition 2024 and depends on
 `slotmap`. Implemented so far: the `Tournament` top-level type, a runtime
-`TournamentPhase` state machine (Registration → Pools → Bracket → Complete), a
+`TournamentPhase` state machine (Registration → Pools → Bracket → Gauntlet →
+Complete), a
 `Registration` capability handle for phase-gated participant editing, and
 `Participant` (name + seed) stored in a `SlotMap` keyed by `ParticipantId`. Still
 **planned, not yet implemented**: races, pools, bracket/rounds, point
@@ -63,7 +64,7 @@ re-deriving or second-guessing them:
   tournament is a single stored/serializable value driven by user actions.
 - **Capability handles for phase-gated operations.** Rather than a phase check in
   every method, `Tournament` hands out a borrow-scoped handle (e.g.
-  `get_registration() -> Option<Registration<'_>>`) that only exists in the
+  `registration() -> Option<Registration<'_>>`) that only exists in the
   correct phase, so the check lives in one place. Transitions consume the handle
   (`Registration::start(self)`) so using it after a transition is a compile
   error.
@@ -104,8 +105,8 @@ now, but keep the code structured so each can be relaxed later without a rewrite
    (see "Tournament rules").
 2. **Brackets are always double elimination.** Single elimination is not
    selectable in v1 (bottom half always drops into the losers' bracket).
-3. **Phases are fixed and linear:** Registration → Pools → Bracket → Complete.
-   Every tournament advances through all four, in that order.
+3. **Phases are fixed and linear:** Registration → Pools → Bracket → Gauntlet →
+   Complete. Every tournament advances through all five, in that order.
 
 These v1 simplifications predate `docs/Rules_Brackets.md`. Where the concrete
 rules go beyond a simplification (the pools bucket qualifier, 6–8-player pool

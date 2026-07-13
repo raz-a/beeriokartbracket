@@ -1,7 +1,9 @@
 // TODO: Remove this
 #![allow(dead_code)]
 
+use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
 use slotmap::{SlotMap, new_key_type};
 
 // Tournament top-level
@@ -72,7 +74,7 @@ impl Placement {
         Ok(Placement(val))
     }
 
-    pub fn points(&self) -> usize {
+    pub fn points(self) -> usize {
         // Points awarded are always relative to an 8 person race, even if the race has less than 8 people.
         MAX_RACERS + 1 - self.0 as usize
     }
@@ -201,7 +203,7 @@ impl RaceGroupTracker {
             Some(self.full_race_size)
         } else if self.small_race_count > 0 {
             self.small_race_count -= 1;
-            Some(self.full_race_count - 1)
+            Some(self.full_race_size - 1)
         } else {
             None
         }
@@ -280,15 +282,13 @@ impl Bucket {
         self.participants.extend_from_slice(participants);
     }
 
-    pub fn pop_next_race_candidate(&mut self) -> Option<Vec<ParticipantId>> {
+    pub fn pop_next_race_candidate(&mut self, rng: &mut impl Rng) -> Option<Vec<ParticipantId>> {
         let group_size = self.tracker.pop_group()?;
 
         let len = self.participants.len();
 
         // Shuffle the participants list and pop off the next `group_size` participants.
-        let _ = self
-            .participants
-            .partial_shuffle(&mut rand::rng(), group_size);
+        let _ = self.participants.partial_shuffle(rng, group_size);
 
         Some(self.participants.split_off(len - group_size))
     }
@@ -299,10 +299,14 @@ pub struct Pool {
     buckets: Box<[Bucket]>,
     current_bucket: usize,
     races: Vec<Race>,
+    rng: StdRng,
+    // TODO: Add an Option "CurrentRace" that will hold the race currently being run in pools.
+    // TODO Add a getCurrentRace function to get a reference to the race.
+    // TODO Add a complete race function that moves the racers to the next bucket and moves the current race to the races vec.
 }
 
 impl Pool {
-    pub fn new(target_races: usize, participants: &[ParticipantId]) -> Option<Self> {
+    pub fn new(target_races: usize, participants: &[ParticipantId], seed: u64) -> Option<Self> {
         // The number of races determines the number of buckets.
         let mut buckets = vec![];
         buckets.resize_with(target_races + 1, || Bucket::new(participants.len()));
@@ -319,17 +323,22 @@ impl Pool {
             buckets,
             current_bucket: 0,
             races: Default::default(),
+            rng: StdRng::seed_from_u64(seed),
         })
     }
 
     pub fn create_next_race(&mut self) -> Option<Race> {
         while self.current_bucket < self.buckets.len() - 1 {
-            if let Some(racers) = self.buckets[self.current_bucket].pop_next_race_candidate() {
+            if let Some(racers) =
+                self.buckets[self.current_bucket].pop_next_race_candidate(&mut self.rng)
+            {
                 let mut race = Race::default();
 
                 race.set_ruleset(self.get_current_ruleset());
                 race.add_racers(&racers)
-                    .expect("Race was just created an shouldn't have any collisions or overflow");
+                    .expect("Race was just created and shouldn't have any collisions or overflow");
+
+                return Some(race);
             }
 
             self.current_bucket += 1;
@@ -366,7 +375,7 @@ mod tests {
 
         for (total, expected) in cases {
             assert_eq!(
-                Pool::possible_race_groups(total, 8),
+                RaceGroupTracker::possible_race_groups(total, 8),
                 expected,
                 "total = {total}"
             );
@@ -378,7 +387,7 @@ mod tests {
         // No combination of 7s and 8s sums to these.
         for total in [6, 13] {
             assert_eq!(
-                Pool::possible_race_groups(total, 8),
+                RaceGroupTracker::possible_race_groups(total, 8),
                 None,
                 "total = {total}"
             );

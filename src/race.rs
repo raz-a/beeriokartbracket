@@ -1,0 +1,85 @@
+use crate::error::TournamentError;
+use crate::participant::ParticipantId;
+
+pub(crate) const MAX_RACERS: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement(u8);
+
+impl Placement {
+    pub fn new(val: u8) -> Result<Self, TournamentError> {
+        if val == 0 || val > MAX_RACERS as u8 {
+            return Err(TournamentError::InvalidPlacementValue);
+        }
+
+        Ok(Placement(val))
+    }
+
+    pub fn points(self) -> usize {
+        // Points awarded are always relative to an 8 person race, even if the race has less than 8 people.
+        MAX_RACERS + 1 - self.0 as usize
+    }
+}
+
+#[derive(Debug, Default)]
+pub enum RaceRuleset {
+    #[default]
+    Vanilla,
+    Beerio,
+}
+
+#[derive(Debug, Default)]
+pub struct Race {
+    racers: Vec<(ParticipantId, Option<Placement>)>,
+    ruleset: RaceRuleset,
+}
+
+impl Race {
+    pub fn set_ruleset(&mut self, ruleset: RaceRuleset) {
+        self.ruleset = ruleset;
+    }
+
+    pub fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
+        if self.racers.len() + racers.len() > MAX_RACERS {
+            return Err(TournamentError::RaceIsFull);
+        }
+
+        if self.racers.iter().any(|(r, _)| racers.contains(r)) {
+            return Err(TournamentError::ParticipantAlreadyInRace);
+        }
+
+        self.racers.extend(racers.iter().map(|&r| (r, None)));
+        Ok(())
+    }
+
+    pub fn remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
+        if let Some(idx) = self.racers.iter().position(|(r, _)| *r == racer) {
+            self.racers.remove(idx);
+            Ok(())
+        } else {
+            Err(TournamentError::NonExistentParticipant)
+        }
+    }
+
+    pub fn set_placement(
+        &mut self,
+        racer: ParticipantId,
+        place: Placement,
+    ) -> Result<(), TournamentError> {
+        if place.0 > self.racers.len() as u8 {
+            return Err(TournamentError::InvalidPlacementValue);
+        }
+
+        // Note: Duplicate placements are allowed in the case of ties.
+        if let Some((_, p)) = self.racers.iter_mut().find(|(r, _)| *r == racer) {
+            *p = Some(place);
+            Ok(())
+        } else {
+            Err(TournamentError::NonExistentParticipant)
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        !self.racers.is_empty() && self.racers.iter().all(|(_, p)| p.is_some())
+    }
+}

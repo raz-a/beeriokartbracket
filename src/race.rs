@@ -82,4 +82,8 @@ impl Race {
     pub fn is_complete(&self) -> bool {
         !self.racers.is_empty() && self.racers.iter().all(|(_, p)| p.is_some())
     }
+
+    pub fn get_racers(&self) -> impl Iterator<Item = ParticipantId> {
+        self.racers.iter().map(|&(p, _)| p)
+    }
 }

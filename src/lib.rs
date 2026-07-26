@@ -12,6 +12,6 @@ mod tournament;
 
 pub use error::TournamentError;
 pub use participant::{Participant, ParticipantId};
-pub use pool::{Bucket, Pool, RaceGroupTracker};
+pub use pool::Pool;
 pub use race::{Placement, Race, RaceRuleset};
 pub use tournament::{Registration, Tournament, TournamentPhase};

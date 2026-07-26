@@ -86,4 +86,8 @@ impl Race {
     pub fn get_racers(&self) -> impl Iterator<Item = ParticipantId> {
         self.racers.iter().map(|&(p, _)| p)
     }
+
+    pub fn get_racers_and_placements(&self) -> &[(ParticipantId, Option<Placement>)] {
+        &self.racers
+    }
 }

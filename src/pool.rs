@@ -1,3 +1,7 @@
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::num::NonZero;
+
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -194,7 +198,7 @@ impl Pool {
 
         debug_assert!(self.current_race.is_none());
 
-        while self.current_round < self.max_round {
+        while !self.is_complete() {
             if let Some(racers) = self.current_bucket.pop_next_race_candidate(&mut self.rng) {
                 let ruleset = self.get_current_ruleset();
                 let race = self.current_race.insert(Race::default());
@@ -220,6 +224,41 @@ impl Pool {
         }
 
         Ok(None)
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.current_round >= self.max_round
+    }
+
+    pub fn top_players(&self, rank: usize) -> Vec<(ParticipantId, usize)> {
+        let mut scores = HashMap::new();
+
+        for race in self.completed_races.iter() {
+            for &(racer, place) in race.get_racers_and_placements() {
+                let points = if let Some(p) = place { p.points() } else { 0 };
+
+                scores
+                    .entry(racer)
+                    .and_modify(|score| *score += points)
+                    .or_insert(points);
+            }
+        }
+
+        let mut scores: Vec<(ParticipantId, usize)> = scores.into_iter().collect();
+        scores.sort_by_key(|&(_, score)| Reverse(score));
+
+        let cutoff_index = if let Some(idx) = NonZero::new(rank.min(scores.len())) {
+            idx.get() - 1
+        } else {
+            return vec![];
+        };
+
+        let (_, cutoff_score) = scores[cutoff_index];
+
+        scores
+            .into_iter()
+            .take_while(|&(_, score)| score >= cutoff_score)
+            .collect()
     }
 
     fn get_current_ruleset(&self) -> RaceRuleset {

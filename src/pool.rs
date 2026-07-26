@@ -1,4 +1,4 @@
-use std::cmp::Reverse;
+use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 use std::num::NonZero;
 
@@ -7,7 +7,7 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use crate::TournamentError;
-use crate::participant::ParticipantId;
+use crate::participant::{ParticipantId, ParticipantScore};
 use crate::race::{MAX_RACERS, Race, RaceRuleset};
 
 /// Pool races are 6-, 7-, or 8-player (per the tournament rules). The tracker
@@ -151,6 +151,13 @@ impl DrainingBucket {
     }
 }
 
+pub struct PoolResult {
+    locked: Vec<ParticipantScore>,
+    tied: Vec<ParticipantScore>,
+    eliminated: Vec<ParticipantScore>,
+    tiebreaker_seats: usize,
+}
+
 #[derive(Debug)]
 pub struct Pool {
     current_bucket: DrainingBucket,
@@ -230,12 +237,20 @@ impl Pool {
         self.current_round >= self.max_round
     }
 
-    pub fn top_players(&self, rank: usize) -> Vec<(ParticipantId, usize)> {
+    pub fn get_results(&self, rank: usize) -> Option<PoolResult> {
+        if !self.is_complete() {
+            return None;
+        }
+
         let mut scores = HashMap::new();
 
         for race in self.completed_races.iter() {
+            debug_assert!(race.is_complete());
+
             for &(racer, place) in race.get_racers_and_placements() {
-                let points = if let Some(p) = place { p.points() } else { 0 };
+                let points = place
+                    .expect("Race is complete so placement is valid")
+                    .points();
 
                 scores
                     .entry(racer)
@@ -244,21 +259,40 @@ impl Pool {
             }
         }
 
-        let mut scores: Vec<(ParticipantId, usize)> = scores.into_iter().collect();
-        scores.sort_by_key(|&(_, score)| Reverse(score));
+        let mut scores: Vec<ParticipantScore> =
+            scores.into_iter().map(ParticipantScore::from).collect();
 
-        let cutoff_index = if let Some(idx) = NonZero::new(rank.min(scores.len())) {
-            idx.get() - 1
+        scores.sort_by_key(|p| Reverse(p.get_score()));
+
+        let cutoff_index = NonZero::new(rank.min(scores.len()))?.get() - 1;
+        let cutoff_score = scores[cutoff_index].get_score();
+
+        let (mut locked, mut tied, eliminated) = scores.into_iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut locked, mut tied, mut eliminated), racer| {
+                match racer.get_score().cmp(&cutoff_score) {
+                    Ordering::Greater => locked.push(racer),
+                    Ordering::Equal => tied.push(racer),
+                    Ordering::Less => eliminated.push(racer),
+                };
+                (locked, tied, eliminated)
+            },
+        );
+
+        let mut tiebreaker_seats = rank - locked.len();
+        if tiebreaker_seats == tied.len() {
+            locked.append(&mut tied);
+            tiebreaker_seats = 0;
         } else {
-            return vec![];
-        };
+            debug_assert!(tiebreaker_seats < tied.len());
+        }
 
-        let (_, cutoff_score) = scores[cutoff_index];
-
-        scores
-            .into_iter()
-            .take_while(|&(_, score)| score >= cutoff_score)
-            .collect()
+        Some(PoolResult {
+            locked,
+            tied,
+            eliminated,
+            tiebreaker_seats,
+        })
     }
 
     fn get_current_ruleset(&self) -> RaceRuleset {

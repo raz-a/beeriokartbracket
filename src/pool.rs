@@ -264,7 +264,9 @@ impl Pool {
 
         scores.sort_by_key(|p| Reverse(p.get_score()));
 
-        let cutoff_index = NonZero::new(rank.min(scores.len()))?.get() - 1;
+        let rank = NonZero::new(rank.min(scores.len()))?.get();
+
+        let cutoff_index = rank - 1;
         let cutoff_score = scores[cutoff_index].get_score();
 
         let (mut locked, mut tied, eliminated) = scores.into_iter().fold(

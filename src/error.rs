@@ -6,4 +6,7 @@ pub enum TournamentError {
     ParticipantAlreadyInRace,
     InvalidPlacementValue,
     RaceIsNotComplete,
+    WrongPhase,
+    NotEnoughRacers,
+    PoolsNotCompleted,
 }

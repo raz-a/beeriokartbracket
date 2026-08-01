@@ -3,10 +3,6 @@ use beeriokartbracket::Tournament;
 fn main() {
     let mut t = Tournament::default();
 
-    if let Some(mut r) = t.registration() {
-        r.add_participant("Tony", 0);
-        r.start().unwrap();
-    }
-
+    let _ = t.add_participant("Tony");
     println!("{:?}", t);
 }

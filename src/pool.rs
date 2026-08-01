@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::TournamentError;
+use crate::TournamentError::{self, NotEnoughRacers};
 use crate::participant::{ParticipantId, ParticipantScore};
 use crate::race::{MAX_RACERS, Race, RaceRuleset};
 
@@ -24,10 +24,10 @@ struct RaceGroupTracker {
 }
 
 impl RaceGroupTracker {
-    fn new(total_participants: usize) -> Option<Self> {
+    fn new(total_participants: usize) -> Result<Self, TournamentError> {
         for i in (MIN_POOL_RACE_SIZE + 1..=MAX_RACERS).rev() {
             if let Some(groups) = Self::possible_race_groups(total_participants, i) {
-                return Some(Self {
+                return Ok(Self {
                     full_race_size: i,
                     full_race_count: groups.0,
                     small_race_count: groups.1,
@@ -35,7 +35,7 @@ impl RaceGroupTracker {
             }
         }
 
-        None
+        Err(NotEnoughRacers)
     }
 
     fn pop_group(&mut self) -> Option<usize> {
@@ -119,9 +119,9 @@ impl FillingBucket {
         self.participants.len()
     }
 
-    fn seal(self) -> Option<DrainingBucket> {
+    fn seal(self) -> Result<DrainingBucket, TournamentError> {
         let tracker = RaceGroupTracker::new(self.participants.len())?;
-        Some(DrainingBucket {
+        Ok(DrainingBucket {
             participants: self.participants,
             tracker,
         })
@@ -171,13 +171,17 @@ pub struct Pool {
 }
 
 impl Pool {
-    pub fn new(target_rounds: usize, participants: &[ParticipantId], seed: u64) -> Option<Self> {
+    pub fn new(
+        target_rounds: usize,
+        participants: &[ParticipantId],
+        seed: u64,
+    ) -> Result<Self, TournamentError> {
         let mut first_bucket = FillingBucket::default();
         first_bucket.push_participants(participants);
 
         let first_bucket = first_bucket.seal()?;
 
-        Some(Pool {
+        Ok(Pool {
             current_bucket: first_bucket,
             next_bucket: Default::default(),
             current_round: 0,

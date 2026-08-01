@@ -5,14 +5,12 @@ new_key_type! { pub struct ParticipantId; }
 #[derive(Debug)]
 pub struct Participant {
     name: String,
-    seed: usize,
 }
 
 impl Participant {
-    pub(crate) fn new(name: &str, seed: usize) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            seed,
         }
     }
 }

@@ -14,4 +14,4 @@ pub use error::TournamentError;
 pub use participant::{Participant, ParticipantId};
 pub use pool::Pool;
 pub use race::{Placement, Race, RaceRuleset};
-pub use tournament::{Tournament, TournamentPhase};
+pub use tournament::{Config, Tournament, TournamentView};

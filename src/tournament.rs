@@ -10,7 +10,7 @@ use crate::participant::{Participant, ParticipantId};
 pub enum TournamentPhase {
     #[default]
     Registration,
-    Pools(Pool),
+    Pools(Box<Pool>),
     Bracket,
     Gauntlet,
     Complete,
@@ -50,11 +50,18 @@ impl Tournament {
     pub fn next_phase(&mut self) -> Result<(), TournamentError> {
         match &self.phase {
             TournamentPhase::Registration => {
-                self.phase = TournamentPhase::Pools(Pool::new(
+                if self.participants.is_empty() {
+                    return Err(TournamentError::NoParticipants);
+                }
+
+                // TODO: The pool seed is non-deterministic (rand::random()), so the
+                // tournament flow can't be reproduced in tests. Thread a seedable
+                // value through Config to make this deterministic later.
+                self.phase = TournamentPhase::Pools(Box::new(Pool::new(
                     self.config.pool_rounds.into(),
                     &self.participants.keys().collect::<Vec<_>>(),
                     rand::random(),
-                )?);
+                )?));
 
                 Ok(())
             }
@@ -95,15 +102,14 @@ impl Tournament {
 
     // Pools Functions
     pub fn advance_pools(&mut self) -> Result<bool, TournamentError> {
-        let pool = self.pools_mut()?;
-        Ok(pool.advance()?.is_none())
+        self.pools_mut()?.advance()
     }
 }
 
 #[derive(Debug)]
 pub struct Config {
-    pool_rounds: NonZero<usize>,
-    bracket_size: NonZero<usize>,
+    pub pool_rounds: NonZero<usize>,
+    pub bracket_size: NonZero<usize>,
 }
 
 const DEFAULT_POOL_ROUNDS: NonZero<usize> = NonZero::new(8).unwrap();
@@ -115,15 +121,5 @@ impl Default for Config {
             pool_rounds: DEFAULT_POOL_ROUNDS,
             bracket_size: DEFAULT_BRACKET_SIZE,
         }
-    }
-}
-
-impl Config {
-    pub fn set_pool_rounds(&mut self, rounds: NonZero<usize>) {
-        self.pool_rounds = rounds;
-    }
-
-    pub fn set_bracket_size(&mut self, size: NonZero<usize>) {
-        self.bracket_size = size;
     }
 }

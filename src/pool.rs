@@ -193,7 +193,7 @@ impl Pool {
         })
     }
 
-    pub fn advance(&mut self) -> Result<Option<&mut Race>, TournamentError> {
+    pub fn advance(&mut self) -> Result<bool, TournamentError> {
         // Record the current in the completed races.
         if let Some(race) = self.current_race.take() {
             if !race.is_complete() {
@@ -217,7 +217,7 @@ impl Pool {
                 race.add_racers(&racers)
                     .expect("Race was just created and shouldn't have any collisions or overflow");
 
-                return Ok(Some(race));
+                return Ok(false);
             }
 
             debug_assert!(self.current_bucket.is_empty());
@@ -234,7 +234,11 @@ impl Pool {
             self.current_round += 1;
         }
 
-        Ok(None)
+        Ok(true)
+    }
+
+    pub fn active_race(&mut self) -> Option<&mut Race> {
+        self.current_race.as_mut()
     }
 
     pub fn is_complete(&self) -> bool {
@@ -372,12 +376,12 @@ mod tests {
     #[test]
     fn pool_rejects_counts_that_cannot_form_legal_races() {
         // 10 racers can't be split into only 6/7/8-player races.
-        assert!(RaceGroupTracker::new(10).is_none());
-        assert!(Pool::new(8, &make_participants(10), 0).is_none());
+        assert!(RaceGroupTracker::new(10).is_err());
+        assert!(Pool::new(8, &make_participants(10), 0).is_err());
 
         // Boundary counts that *can* form legal races.
-        assert!(RaceGroupTracker::new(6).is_some()); // a single 6-player race
-        assert!(RaceGroupTracker::new(8).is_some()); // a single 8-player race
+        assert!(RaceGroupTracker::new(6).is_ok()); // a single 6-player race
+        assert!(RaceGroupTracker::new(8).is_ok()); // a single 8-player race
     }
 
     #[test]
@@ -386,7 +390,10 @@ mod tests {
         let mut pool = Pool::new(8, &ids, 42).unwrap();
 
         let mut appearances: HashMap<ParticipantId, usize> = HashMap::new();
-        while let Some(race) = pool.advance().unwrap() {
+        while !pool.advance().unwrap() {
+            let race = pool
+                .active_race()
+                .expect("advance() == false guarantees an active race");
             for id in race.get_racers() {
                 *appearances.entry(id).or_default() += 1;
             }
@@ -406,7 +413,10 @@ mod tests {
         let ids = make_participants(15);
         let mut pool = Pool::new(8, &ids, 7).unwrap();
 
-        while let Some(race) = pool.advance().unwrap() {
+        while !pool.advance().unwrap() {
+            let race = pool
+                .active_race()
+                .expect("advance() == false guarantees an active race");
             let size = race.get_racers().count();
             assert!(
                 (6..=8).contains(&size),

@@ -6,9 +6,10 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::TournamentError::{self, NotEnoughRacers};
-use crate::participant::{ParticipantId, ParticipantScore};
-use crate::race::{MAX_RACERS, Race, RaceRuleset};
+use crate::TournamentError::{self, NotEnoughParticipants};
+use crate::participant::{ParticipantId, ParticipantScore, ParticipantView};
+use crate::race::{MAX_RACERS, Race, RaceRuleset, RaceView};
+use crate::view::{ParticipantMap, Viewable};
 
 /// Pool races are 6-, 7-, or 8-player (per the tournament rules). The tracker
 /// splits a bucket into races of size `t` and `t - 1`, so the smallest full
@@ -35,7 +36,7 @@ impl RaceGroupTracker {
             }
         }
 
-        Err(NotEnoughRacers)
+        Err(NotEnoughParticipants)
     }
 
     fn pop_group(&mut self) -> Option<usize> {
@@ -159,7 +160,7 @@ pub struct PoolResult {
 }
 
 #[derive(Debug)]
-pub struct Pool {
+pub(crate) struct Pool {
     current_bucket: DrainingBucket,
     next_bucket: FillingBucket,
     current_round: usize,
@@ -202,8 +203,8 @@ impl Pool {
             }
 
             // Move the completed race participants to the next bucket.
-            let racers: Vec<ParticipantId> = race.get_racers().collect();
-            self.next_bucket.push_participants(&racers);
+            let participants: Vec<ParticipantId> = race.get_racers().collect();
+            self.next_bucket.push_participants(&participants);
             self.completed_races.push(race);
         }
 
@@ -310,6 +311,43 @@ impl Pool {
             RaceRuleset::Beerio
         } else {
             RaceRuleset::Vanilla
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PoolView {
+    pub current_round: usize,
+    pub max_rounds: usize,
+    pub completed_races: Vec<RaceView>,
+    pub current_race: Option<RaceView>,
+    pub remaining_racers_in_round: Vec<ParticipantView>,
+    pub completed_racers_in_round: Vec<ParticipantView>,
+}
+
+impl Viewable<PoolView> for Pool {
+    fn view(&self, id_map: &ParticipantMap) -> PoolView {
+        PoolView {
+            current_round: self.current_round,
+            max_rounds: self.max_round,
+            completed_races: self
+                .completed_races
+                .iter()
+                .map(|race| race.view(id_map))
+                .collect(),
+            current_race: self.current_race.as_ref().map(|race| race.view(id_map)),
+            remaining_racers_in_round: self
+                .current_bucket
+                .participants
+                .iter()
+                .map(|racer| racer.view(id_map))
+                .collect(),
+            completed_racers_in_round: self
+                .next_bucket
+                .participants
+                .iter()
+                .map(|racer| racer.view(id_map))
+                .collect(),
         }
     }
 }

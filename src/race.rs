@@ -1,5 +1,6 @@
 use crate::error::TournamentError;
-use crate::participant::ParticipantId;
+use crate::participant::{ParticipantId, ParticipantView};
+use crate::view::{ParticipantMap, Viewable};
 
 pub(crate) const MAX_RACERS: usize = 8;
 
@@ -21,7 +22,7 @@ impl Placement {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum RaceRuleset {
     #[default]
     Vanilla,
@@ -29,7 +30,7 @@ pub enum RaceRuleset {
 }
 
 #[derive(Debug, Default)]
-pub struct Race {
+pub(crate) struct Race {
     racers: Vec<(ParticipantId, Option<Placement>)>,
     ruleset: RaceRuleset,
 }
@@ -45,7 +46,7 @@ impl Race {
         }
 
         if self.racers.iter().any(|(r, _)| racers.contains(r)) {
-            return Err(TournamentError::ParticipantAlreadyInRace);
+            return Err(TournamentError::RacerAlreadyInRace);
         }
 
         self.racers.extend(racers.iter().map(|&r| (r, None)));
@@ -57,7 +58,7 @@ impl Race {
             self.racers.remove(idx);
             Ok(())
         } else {
-            Err(TournamentError::NonExistentParticipant)
+            Err(TournamentError::RacerNotInRace)
         }
     }
 
@@ -75,7 +76,7 @@ impl Race {
             *p = Some(place);
             Ok(())
         } else {
-            Err(TournamentError::NonExistentParticipant)
+            Err(TournamentError::RacerNotInRace)
         }
     }
 
@@ -89,5 +90,24 @@ impl Race {
 
     pub fn get_racers_and_placements(&self) -> &[(ParticipantId, Option<Placement>)] {
         &self.racers
+    }
+}
+
+#[derive(Debug)]
+pub struct RaceView {
+    pub racers: Vec<(ParticipantView, Option<Placement>)>,
+    pub ruleset: RaceRuleset,
+}
+
+impl Viewable<RaceView> for Race {
+    fn view(&self, id_map: &ParticipantMap) -> RaceView {
+        RaceView {
+            racers: self
+                .racers
+                .iter()
+                .map(|(id, place)| (id.view(id_map), *place))
+                .collect(),
+            ruleset: self.ruleset,
+        }
     }
 }

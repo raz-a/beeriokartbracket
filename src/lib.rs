@@ -4,14 +4,17 @@
 // TODO: Add tests.
 // TODO: Connect Pools logic to tournament.
 
+mod config;
 mod error;
 mod participant;
 mod pool;
 mod race;
 mod tournament;
+mod view;
 
+pub use config::Config;
 pub use error::TournamentError;
-pub use participant::{Participant, ParticipantId};
-pub use pool::Pool;
-pub use race::{Placement, Race, RaceRuleset};
-pub use tournament::{Config, Tournament, TournamentView};
+pub use participant::ParticipantId;
+pub use race::{Placement, RaceRuleset};
+pub use tournament::Tournament;
+pub use view::TournamentView;

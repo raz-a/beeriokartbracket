@@ -1,13 +1,11 @@
-use std::num::NonZero;
-
-use slotmap::SlotMap;
-
-use crate::Pool;
+use crate::config::Config;
 use crate::error::TournamentError;
-use crate::participant::{Participant, ParticipantId};
+use crate::participant::{Participant, ParticipantId, ParticipantView};
+use crate::pool::Pool;
+use crate::view::{ParticipantMap, RegistrationView, TournamentView, Viewable};
 
 #[derive(Debug, Default)]
-pub enum TournamentPhase {
+enum TournamentPhase {
     #[default]
     Registration,
     Pools(Box<Pool>),
@@ -16,13 +14,11 @@ pub enum TournamentPhase {
     Complete,
 }
 
-pub enum TournamentView {}
-
 #[derive(Debug, Default)]
 pub struct Tournament {
     phase: TournamentPhase,
     config: Config,
-    participants: SlotMap<ParticipantId, Participant>,
+    participants: ParticipantMap,
 }
 
 impl Tournament {
@@ -39,12 +35,6 @@ impl Tournament {
             TournamentPhase::Pools(pool) => Ok(pool),
             _ => Err(TournamentError::WrongPhase),
         }
-    }
-
-    // Common Functions:
-
-    pub fn view(&self) -> TournamentView {
-        todo!("Implement View logic to give state based on current phase");
     }
 
     pub fn next_phase(&mut self) -> Result<(), TournamentError> {
@@ -79,6 +69,10 @@ impl Tournament {
         }
     }
 
+    pub fn view(&self) -> TournamentView {
+        Viewable::view(self, &self.participants)
+    }
+
     // Registration Functions
 
     pub fn add_participant(&mut self, name: &str) -> Result<ParticipantId, TournamentError> {
@@ -106,20 +100,23 @@ impl Tournament {
     }
 }
 
-#[derive(Debug)]
-pub struct Config {
-    pub pool_rounds: NonZero<usize>,
-    pub bracket_size: NonZero<usize>,
-}
-
-const DEFAULT_POOL_ROUNDS: NonZero<usize> = NonZero::new(8).unwrap();
-const DEFAULT_BRACKET_SIZE: NonZero<usize> = NonZero::new(16).unwrap();
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            pool_rounds: DEFAULT_POOL_ROUNDS,
-            bracket_size: DEFAULT_BRACKET_SIZE,
+impl Viewable<TournamentView> for Tournament {
+    fn view(&self, id_map: &ParticipantMap) -> TournamentView {
+        match &self.phase {
+            TournamentPhase::Registration => TournamentView::Registration(RegistrationView {
+                participants: id_map
+                    .iter()
+                    .map(|(id, participant)| ParticipantView {
+                        id,
+                        name: participant.name().to_owned(),
+                    })
+                    .collect(),
+                config: self.config,
+            }),
+            TournamentPhase::Pools(pool) => TournamentView::Pools(pool.as_ref().view(id_map)),
+            TournamentPhase::Bracket => TournamentView::Bracket,
+            TournamentPhase::Gauntlet => TournamentView::Gauntlet,
+            TournamentPhase::Complete => TournamentView::Complete,
         }
     }
 }

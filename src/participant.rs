@@ -1,9 +1,20 @@
 use slotmap::new_key_type;
 
+use crate::view::{ParticipantMap, Viewable};
+
 new_key_type! { pub struct ParticipantId; }
 
+impl Viewable<ParticipantView> for ParticipantId {
+    fn view(&self, id_map: &ParticipantMap) -> ParticipantView {
+        ParticipantView {
+            name: id_map.get(*self).unwrap().name.clone(),
+            id: *self,
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct Participant {
+pub(crate) struct Participant {
     name: String,
 }
 
@@ -13,9 +24,13 @@ impl Participant {
             name: name.to_string(),
         }
     }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
 }
 
-pub struct ParticipantScore {
+pub(crate) struct ParticipantScore {
     id: ParticipantId,
     score: usize,
 }
@@ -34,4 +49,10 @@ impl From<(ParticipantId, usize)> for ParticipantScore {
     fn from((id, score): (ParticipantId, usize)) -> Self {
         Self { id, score }
     }
+}
+
+#[derive(Debug)]
+pub struct ParticipantView {
+    pub name: String,
+    pub id: ParticipantId,
 }

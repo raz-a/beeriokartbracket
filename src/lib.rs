@@ -4,6 +4,7 @@
 // TODO: Add tests.
 // TODO: Connect Pools logic to tournament.
 
+mod bracket;
 mod config;
 mod error;
 mod participant;

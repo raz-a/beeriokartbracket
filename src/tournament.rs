@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::Placement;
+use crate::bracket::Bracket;
 use crate::config::Config;
 use crate::error::TournamentError;
 use crate::participant::{Participant, ParticipantId, ParticipantMap, ParticipantView};
@@ -13,7 +14,7 @@ enum TournamentPhase {
     #[default]
     Registration,
     Pools(Box<Pool>),
-    Bracket,
+    Bracket(Box<Bracket>),
     Gauntlet,
     Complete,
 }
@@ -58,13 +59,13 @@ impl Tournament {
             }
             TournamentPhase::Pools(pool) => {
                 if pool.is_complete() {
-                    self.phase = TournamentPhase::Bracket;
+                    self.phase = TournamentPhase::Bracket(Box::new(Bracket));
                     Ok(())
                 } else {
                     Err(TournamentError::PoolsNotCompleted)
                 }
             }
-            TournamentPhase::Bracket => todo!(),
+            TournamentPhase::Bracket(_) => todo!(),
             TournamentPhase::Gauntlet => todo!(),
             TournamentPhase::Complete => todo!(),
         }
@@ -171,7 +172,7 @@ impl Viewable<TournamentView> for Tournament {
                 pool.get_results(self.config.bracket_size.get())
                     .map(|r| r.view(id_map)),
             )),
-            TournamentPhase::Bracket => TournamentView::Bracket,
+            TournamentPhase::Bracket(_) => TournamentView::Bracket,
             TournamentPhase::Gauntlet => TournamentView::Gauntlet,
             TournamentPhase::Complete => TournamentView::Complete,
         }

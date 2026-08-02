@@ -48,13 +48,10 @@ impl Tournament {
                     return Err(TournamentError::NoParticipants);
                 }
 
-                // TODO: The pool seed is non-deterministic (rand::random()), so the
-                // tournament flow can't be reproduced in tests. Thread a seedable
-                // value through Config to make this deterministic later.
                 self.phase = TournamentPhase::Pools(Box::new(Pool::new(
                     self.config.pool_rounds.into(),
                     &self.participants.keys().collect::<Vec<_>>(),
-                    rand::random(),
+                    self.config.seed,
                 )?));
 
                 Ok(())

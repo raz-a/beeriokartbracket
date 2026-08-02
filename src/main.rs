@@ -131,6 +131,7 @@ fn parse_config(input: &str) -> Option<Config> {
     Some(Config {
         pool_rounds,
         bracket_size,
+        ..Config::default()
     })
 }
 

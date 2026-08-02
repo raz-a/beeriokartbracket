@@ -10,4 +10,6 @@ pub enum TournamentError {
     WrongPhase,
     NotEnoughParticipants,
     PoolsNotCompleted,
+    RaceNotFound,
+    ResultsDontMatchRace,
 }

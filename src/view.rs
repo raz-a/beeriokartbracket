@@ -1,10 +1,6 @@
-use slotmap::SlotMap;
-
 use crate::config::Config;
-use crate::participant::{Participant, ParticipantId, ParticipantView};
-use crate::pool::PoolView;
-
-pub(crate) type ParticipantMap = SlotMap<ParticipantId, Participant>;
+use crate::participant::{ParticipantMap, ParticipantView};
+use crate::pool::{PoolResultView, PoolView};
 
 pub(crate) trait Viewable<View> {
     fn view(&self, id_map: &ParticipantMap) -> View;
@@ -19,7 +15,7 @@ pub struct RegistrationView {
 #[derive(Debug)]
 pub enum TournamentView {
     Registration(RegistrationView),
-    Pools(PoolView),
+    Pools((PoolView, Option<PoolResultView>)),
     Bracket,
     Gauntlet,
     Complete,

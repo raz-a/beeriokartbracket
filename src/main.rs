@@ -1,7 +1,8 @@
 use std::io::{self, Write};
 use std::num::NonZero;
 
-use beeriokartbracket::{Config, Tournament, TournamentView};
+use beeriokartbracket::{Config, Placement, Tournament, TournamentView};
+use rand::seq::SliceRandom;
 
 fn main() {
     let mut tournament = Tournament::default();
@@ -48,6 +49,53 @@ fn main() {
                     match tournament.next_phase() {
                         Ok(()) => println!("Starting pools..."),
                         Err(e) => println!("cannot start: {e:?}"),
+                    }
+                } else if line == "quit" {
+                    break;
+                } else {
+                    println!("unknown command");
+                }
+            }
+            TournamentView::Pools(pool) => {
+                println!("\ncommands: advance | finish | next | quit");
+
+                let Some(line) = prompt("> ") else { break };
+                let line = line.trim();
+
+                if line.is_empty() {
+                    continue;
+                } else if line == "advance" {
+                    match tournament.advance_pools() {
+                        Ok(true) => println!("pool complete - use 'next'"),
+                        Ok(false) => println!("advanced to next race"),
+                        Err(e) => println!("error: {e:?}"),
+                    }
+                } else if line == "finish" {
+                    match pool.0.current_race {
+                        // Assign a random distinct placement to each racer, then submit.
+                        Some(race) => {
+                            let mut places: Vec<u8> = (1..=race.racers.len() as u8).collect();
+                            places.shuffle(&mut rand::rng());
+                            let results: Vec<_> = race
+                                .racers
+                                .iter()
+                                .zip(places)
+                                .map(|((racer, _), place)| {
+                                    (racer.id, Some(Placement::new(place).unwrap()))
+                                })
+                                .collect();
+                            match tournament.update_active_race(results) {
+                                Ok(true) => println!("race complete"),
+                                Ok(false) => println!("race updated (incomplete)"),
+                                Err(e) => println!("error: {e:?}"),
+                            }
+                        }
+                        None => println!("no active race - 'advance' first"),
+                    }
+                } else if line == "next" {
+                    match tournament.next_phase() {
+                        Ok(()) => println!("advancing phase..."),
+                        Err(e) => println!("cannot advance: {e:?}"),
                     }
                 } else if line == "quit" {
                     break;
@@ -105,8 +153,8 @@ fn render(view: &TournamentView) {
         }
         TournamentView::Pools(pool) => {
             print_header("Pools");
-            println!("  round {} / {}", pool.current_round, pool.max_rounds);
-            match &pool.current_race {
+            println!("  round {} / {}", pool.0.current_round, pool.0.max_rounds);
+            match &pool.0.current_race {
                 Some(race) => {
                     println!("  current race [{:?}]:", race.ruleset);
                     for (racer, placement) in &race.racers {
@@ -120,10 +168,19 @@ fn render(view: &TournamentView) {
             }
             println!(
                 "  this round: {} waiting, {} done",
-                pool.remaining_racers_in_round.len(),
-                pool.completed_racers_in_round.len()
+                pool.0.remaining_racers_in_round.len(),
+                pool.0.completed_racers_in_round.len()
             );
-            println!("  completed races: {}", pool.completed_races.len());
+            println!("  completed races: {}", pool.0.completed_races.len());
+
+            if let Some(results) = &pool.1 {
+                println!("  -- results --");
+                println!("  advancing ({}):", results.advanced.len());
+                for (racer, score) in &results.advanced {
+                    println!("    {} - {score} pts", racer.name);
+                }
+                println!("  eliminated: {}", results.eliminated.len());
+            }
         }
         TournamentView::Bracket => print_header("Bracket"),
         TournamentView::Gauntlet => print_header("Gauntlet"),

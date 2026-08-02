@@ -7,9 +7,9 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use crate::TournamentError::{self, NotEnoughParticipants};
-use crate::participant::{ParticipantId, ParticipantScore, ParticipantView};
-use crate::race::{MAX_RACERS, Race, RaceRuleset, RaceView};
-use crate::view::{ParticipantMap, Viewable};
+use crate::participant::{ParticipantId, ParticipantMap, ParticipantScore, ParticipantView};
+use crate::race::{MAX_RACERS, Race, RaceId, RaceMap, RaceRuleset, RaceView};
+use crate::view::Viewable;
 
 /// Pool races are 6-, 7-, or 8-player (per the tournament rules). The tracker
 /// splits a bucket into races of size `t` and `t - 1`, so the smallest full
@@ -152,11 +152,10 @@ impl DrainingBucket {
     }
 }
 
+#[derive(Debug)]
 pub struct PoolResult {
-    locked: Vec<ParticipantScore>,
-    tied: Vec<ParticipantScore>,
+    advanced: Vec<ParticipantScore>,
     eliminated: Vec<ParticipantScore>,
-    tiebreaker_seats: usize,
 }
 
 #[derive(Debug)]
@@ -167,7 +166,7 @@ pub(crate) struct Pool {
     max_round: usize,
     number_of_participants: usize,
     current_race: Option<Race>,
-    completed_races: Vec<Race>,
+    completed_races: RaceMap,
     rng: StdRng,
 }
 
@@ -205,7 +204,7 @@ impl Pool {
             // Move the completed race participants to the next bucket.
             let participants: Vec<ParticipantId> = race.get_racers().collect();
             self.next_bucket.push_participants(&participants);
-            self.completed_races.push(race);
+            self.completed_races.insert(race);
         }
 
         debug_assert!(self.current_race.is_none());
@@ -242,6 +241,10 @@ impl Pool {
         self.current_race.as_mut()
     }
 
+    pub fn completed_race(&mut self, id: RaceId) -> Option<&mut Race> {
+        self.completed_races.get_mut(id)
+    }
+
     pub fn is_complete(&self) -> bool {
         self.current_round >= self.max_round
     }
@@ -253,7 +256,7 @@ impl Pool {
 
         let mut scores = HashMap::new();
 
-        for race in self.completed_races.iter() {
+        for (_, race) in self.completed_races.iter() {
             debug_assert!(race.is_complete());
 
             for &(racer, place) in race.get_racers_and_placements() {
@@ -275,10 +278,12 @@ impl Pool {
 
         let rank = NonZero::new(rank.min(scores.len()))?.get();
 
+        // Determine the cutoff score. Any racer with a score less than this is guaranteed eliminated.
+        // Any racer with a score higher than this is guaranteed to have advanced.
         let cutoff_index = rank - 1;
         let cutoff_score = scores[cutoff_index].get_score();
 
-        let (mut locked, mut tied, eliminated) = scores.into_iter().fold(
+        let (mut advanced, mut tied, mut eliminated) = scores.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut locked, mut tied, mut eliminated), racer| {
                 match racer.get_score().cmp(&cutoff_score) {
@@ -290,19 +295,40 @@ impl Pool {
             },
         );
 
-        let mut tiebreaker_seats = rank - locked.len();
-        if tiebreaker_seats == tied.len() {
-            locked.append(&mut tied);
-            tiebreaker_seats = 0;
-        } else {
-            debug_assert!(tiebreaker_seats < tied.len());
+        // If there are any tied participants in open seats, then attempt to fill the seats using
+        // countback-tiers.
+
+        let mut countback_profile: HashMap<ParticipantId, [usize; MAX_RACERS]> = tied
+            .iter()
+            .map(|participant| (participant.get_id(), [0; MAX_RACERS]))
+            .collect();
+
+        for (_, race) in &self.completed_races {
+            for (racer, placement) in race.get_racers_and_placements() {
+                let placement = placement.expect("Race is complete so placement is valid");
+
+                if let Some(entry) = countback_profile.get_mut(racer) {
+                    entry[placement.placement_idx() as usize] += 1;
+                }
+            }
         }
 
+        tied.sort_by(|a, b| {
+            countback_profile
+                .get(&a.get_id())
+                .unwrap()
+                .cmp(countback_profile.get(&b.get_id()).unwrap())
+                .reverse()
+        });
+
+        let tiebreaker_seats = rank - advanced.len();
+        let mut tied = tied.into_iter();
+        advanced.extend(tied.by_ref().take(tiebreaker_seats));
+        eliminated.extend(tied);
+
         Some(PoolResult {
-            locked,
-            tied,
+            advanced,
             eliminated,
-            tiebreaker_seats,
         })
     }
 
@@ -319,10 +345,16 @@ impl Pool {
 pub struct PoolView {
     pub current_round: usize,
     pub max_rounds: usize,
-    pub completed_races: Vec<RaceView>,
+    pub completed_races: Vec<(RaceId, RaceView)>,
     pub current_race: Option<RaceView>,
     pub remaining_racers_in_round: Vec<ParticipantView>,
     pub completed_racers_in_round: Vec<ParticipantView>,
+}
+
+impl PoolView {
+    pub fn is_complete(&self) -> bool {
+        self.current_round >= self.max_rounds
+    }
 }
 
 impl Viewable<PoolView> for Pool {
@@ -333,7 +365,7 @@ impl Viewable<PoolView> for Pool {
             completed_races: self
                 .completed_races
                 .iter()
-                .map(|race| race.view(id_map))
+                .map(|(id, race)| (id, race.view(id_map)))
                 .collect(),
             current_race: self.current_race.as_ref().map(|race| race.view(id_map)),
             remaining_racers_in_round: self
@@ -348,6 +380,33 @@ impl Viewable<PoolView> for Pool {
                 .iter()
                 .map(|racer| racer.view(id_map))
                 .collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PoolResultView {
+    pub advanced: Vec<(ParticipantView, usize)>,
+    pub eliminated: Vec<(ParticipantView, usize)>,
+}
+
+impl Viewable<PoolResultView> for PoolResult {
+    fn view(&self, id_map: &ParticipantMap) -> PoolResultView {
+        let to_views = |scores: &[ParticipantScore]| -> Vec<(ParticipantView, usize)> {
+            let mut views: Vec<(ParticipantView, usize)> = scores
+                .iter()
+                .map(|s| (s.get_id().view(id_map), s.get_score()))
+                .collect();
+            // Highest score first, then by name, for a stable display order.
+            views.sort_by(|(a, a_score), (b, b_score)| {
+                b_score.cmp(a_score).then_with(|| a.name.cmp(&b.name))
+            });
+            views
+        };
+
+        PoolResultView {
+            advanced: to_views(&self.advanced),
+            eliminated: to_views(&self.eliminated),
         }
     }
 }
@@ -372,9 +431,86 @@ mod tests {
     fn complete_race(race: &mut Race) {
         let racers: Vec<ParticipantId> = race.get_racers().collect();
         for (i, id) in racers.iter().enumerate() {
-            race.set_placement(*id, Placement::new((i + 1) as u8).unwrap())
+            race.set_placement(*id, Some(Placement::new((i + 1) as u8).unwrap()))
                 .unwrap();
         }
+    }
+
+    /// Builds a completed race from `(racer, placement)` pairs.
+    fn make_race(results: &[(ParticipantId, u8)]) -> Race {
+        let mut race = Race::default();
+        let ids: Vec<ParticipantId> = results.iter().map(|&(id, _)| id).collect();
+        race.add_racers(&ids).unwrap();
+        for &(id, place) in results {
+            race.set_placement(id, Some(Placement::new(place).unwrap()))
+                .unwrap();
+        }
+        race
+    }
+
+    /// A pool marked complete holding just `races`; bucket state is irrelevant to `get_results`.
+    fn completed_pool(races: Vec<Race>) -> Pool {
+        let mut pool = Pool::new(1, &make_participants(8), 0).unwrap();
+        pool.current_round = pool.max_round;
+        for race in races {
+            pool.completed_races.insert(race);
+        }
+        pool
+    }
+
+    fn id_set(scores: &[ParticipantScore]) -> HashSet<ParticipantId> {
+        scores.iter().map(|s| s.get_id()).collect()
+    }
+
+    #[test]
+    fn countback_orders_by_most_wins() {
+        let ids = make_participants(3);
+        let (a, b, c) = (ids[0], ids[1], ids[2]);
+
+        // All three total 14 points, but B finished 2nd twice (no wins) while
+        // A and C each took a 1st — so B loses the count-back for the last seats.
+        let pool = completed_pool(vec![
+            make_race(&[(a, 1), (b, 2), (c, 3)]),
+            make_race(&[(a, 3), (b, 2), (c, 1)]),
+        ]);
+
+        let result = pool.get_results(2).unwrap();
+        assert_eq!(id_set(&result.advanced), HashSet::from([a, c]));
+        assert_eq!(id_set(&result.eliminated), HashSet::from([b]));
+    }
+
+    #[test]
+    fn countback_uses_deeper_positions_when_wins_tie() {
+        let ids = make_participants(4);
+        let (x, y, p, q) = (ids[0], ids[1], ids[2], ids[3]);
+
+        // P advances on score (22), Q is out on score (16). X and Y both total
+        // 20 with one win each, but X has a 2nd and Y doesn't — X takes the seat.
+        let pool = completed_pool(vec![
+            make_race(&[(x, 1), (y, 3), (p, 2), (q, 4)]),
+            make_race(&[(x, 2), (y, 3), (p, 1), (q, 4)]),
+            make_race(&[(x, 4), (y, 1), (p, 2), (q, 3)]),
+        ]);
+
+        let result = pool.get_results(2).unwrap();
+        assert_eq!(id_set(&result.advanced), HashSet::from([p, x]));
+        assert_eq!(id_set(&result.eliminated), HashSet::from([q, y]));
+    }
+
+    #[test]
+    fn tied_group_all_advances_when_seats_match() {
+        let ids = make_participants(3);
+        let (a, b, c) = (ids[0], ids[1], ids[2]);
+
+        // Three-way tie at 14; with 3 seats, count-back eliminates no one.
+        let pool = completed_pool(vec![
+            make_race(&[(a, 1), (b, 2), (c, 3)]),
+            make_race(&[(a, 3), (b, 2), (c, 1)]),
+        ]);
+
+        let result = pool.get_results(3).unwrap();
+        assert_eq!(id_set(&result.advanced), HashSet::from([a, b, c]));
+        assert!(result.eliminated.is_empty());
     }
 
     #[test]

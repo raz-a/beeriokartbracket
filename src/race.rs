@@ -1,6 +1,12 @@
+use slotmap::{SlotMap, new_key_type};
+
 use crate::error::TournamentError;
-use crate::participant::{ParticipantId, ParticipantView};
-use crate::view::{ParticipantMap, Viewable};
+use crate::participant::{ParticipantId, ParticipantMap, ParticipantView};
+use crate::view::Viewable;
+
+new_key_type! { pub struct RaceId; }
+
+pub(crate) type RaceMap = SlotMap<RaceId, Race>;
 
 pub(crate) const MAX_RACERS: usize = 8;
 
@@ -16,9 +22,17 @@ impl Placement {
         Ok(Placement(val))
     }
 
-    pub fn points(self) -> usize {
+    pub fn points(&self) -> usize {
         // Points awarded are always relative to an 8 person race, even if the race has less than 8 people.
-        MAX_RACERS + 1 - self.0 as usize
+        MAX_RACERS - self.placement_idx() as usize
+    }
+
+    pub fn placement(&self) -> u8 {
+        self.0
+    }
+
+    pub fn placement_idx(&self) -> u8 {
+        self.placement() - 1
     }
 }
 
@@ -65,15 +79,17 @@ impl Race {
     pub fn set_placement(
         &mut self,
         racer: ParticipantId,
-        place: Placement,
+        place: Option<Placement>,
     ) -> Result<(), TournamentError> {
-        if place.0 > self.racers.len() as u8 {
+        if let Some(p) = place
+            && p.placement() > self.racers.len() as u8
+        {
             return Err(TournamentError::InvalidPlacementValue);
         }
 
         // Note: Duplicate placements are allowed in the case of ties.
         if let Some((_, p)) = self.racers.iter_mut().find(|(r, _)| *r == racer) {
-            *p = Some(place);
+            *p = place;
             Ok(())
         } else {
             Err(TournamentError::RacerNotInRace)

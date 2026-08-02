@@ -1,8 +1,12 @@
+use std::collections::HashSet;
+
+use crate::Placement;
 use crate::config::Config;
 use crate::error::TournamentError;
-use crate::participant::{Participant, ParticipantId, ParticipantView};
+use crate::participant::{Participant, ParticipantId, ParticipantMap, ParticipantView};
 use crate::pool::Pool;
-use crate::view::{ParticipantMap, RegistrationView, TournamentView, Viewable};
+use crate::race::{Race, RaceId};
+use crate::view::{RegistrationView, TournamentView, Viewable};
 
 #[derive(Debug, Default)]
 enum TournamentPhase {
@@ -98,6 +102,58 @@ impl Tournament {
     pub fn advance_pools(&mut self) -> Result<bool, TournamentError> {
         self.pools_mut()?.advance()
     }
+
+    pub fn update_active_race(
+        &mut self,
+        results: Vec<(ParticipantId, Option<Placement>)>,
+    ) -> Result<bool, TournamentError> {
+        let current_race = self
+            .pools_mut()?
+            .active_race()
+            .ok_or(TournamentError::RaceNotFound)?;
+
+        Self::update_race(current_race, results)
+    }
+
+    pub fn update_completed_race(
+        &mut self,
+        id: RaceId,
+        results: Vec<(ParticipantId, Option<Placement>)>,
+    ) -> Result<bool, TournamentError> {
+        let race = self
+            .pools_mut()?
+            .completed_race(id)
+            .ok_or(TournamentError::RaceNotFound)?;
+
+        Self::update_race(race, results)
+    }
+
+    fn update_race(
+        race: &mut Race,
+        results: Vec<(ParticipantId, Option<Placement>)>,
+    ) -> Result<bool, TournamentError> {
+        let race_ids: HashSet<_> = race.get_racers().collect();
+        let result_ids: HashSet<_> = results.iter().map(|(id, _)| *id).collect();
+
+        // Set match rejects missing/extra ids; the length match rejects duplicates.
+        if race_ids != result_ids || results.len() != race_ids.len() {
+            return Err(TournamentError::ResultsDontMatchRace);
+        }
+
+        for (_, p) in results.iter() {
+            if let Some(p) = p
+                && p.placement() as usize > results.len()
+            {
+                return Err(TournamentError::InvalidPlacementValue);
+            }
+        }
+
+        for (racer, place) in results {
+            race.set_placement(racer, place)?;
+        }
+
+        Ok(race.is_complete())
+    }
 }
 
 impl Viewable<TournamentView> for Tournament {
@@ -113,7 +169,11 @@ impl Viewable<TournamentView> for Tournament {
                     .collect(),
                 config: self.config,
             }),
-            TournamentPhase::Pools(pool) => TournamentView::Pools(pool.as_ref().view(id_map)),
+            TournamentPhase::Pools(pool) => TournamentView::Pools((
+                pool.as_ref().view(id_map),
+                pool.get_results(self.config.bracket_size.get())
+                    .map(|r| r.view(id_map)),
+            )),
             TournamentPhase::Bracket => TournamentView::Bracket,
             TournamentPhase::Gauntlet => TournamentView::Gauntlet,
             TournamentPhase::Complete => TournamentView::Complete,

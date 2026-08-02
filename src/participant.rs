@@ -1,8 +1,10 @@
-use slotmap::new_key_type;
+use slotmap::{SlotMap, new_key_type};
 
-use crate::view::{ParticipantMap, Viewable};
+use crate::view::Viewable;
 
 new_key_type! { pub struct ParticipantId; }
+
+pub(crate) type ParticipantMap = SlotMap<ParticipantId, Participant>;
 
 impl Viewable<ParticipantView> for ParticipantId {
     fn view(&self, id_map: &ParticipantMap) -> ParticipantView {
@@ -30,6 +32,7 @@ impl Participant {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ParticipantScore {
     id: ParticipantId,
     score: usize,

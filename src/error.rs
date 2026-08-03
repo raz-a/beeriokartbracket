@@ -12,4 +12,5 @@ pub enum TournamentError {
     PoolsNotCompleted,
     RaceNotFound,
     ResultsDontMatchRace,
+    BracketSetAlreadyStarted,
 }

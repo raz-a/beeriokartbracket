@@ -13,4 +13,5 @@ pub enum TournamentError {
     RaceNotFound,
     ResultsDontMatchRace,
     BracketSetAlreadyStarted,
+    InvalidBracketSetSize,
 }

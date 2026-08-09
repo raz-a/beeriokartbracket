@@ -10,6 +10,7 @@ mod error;
 mod participant;
 mod pool;
 mod race;
+mod race_group;
 mod tournament;
 mod view;
 

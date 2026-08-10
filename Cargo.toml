@@ -6,3 +6,9 @@ edition = "2024"
 [dependencies]
 rand = "0.10.2"
 slotmap = "1.1.1"
+
+[workspace]
+members = ["gui"]
+# Keep the library + REPL as the default target so `cargo build/test/clippy` stay
+# fast; build the GUI explicitly with `-p beeriokartbracket-gui`.
+default-members = ["."]

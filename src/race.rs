@@ -1,12 +1,10 @@
-use slotmap::{SlotMap, new_key_type};
+use slotmap::new_key_type;
 
 use crate::error::TournamentError;
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantView};
 use crate::view::Viewable;
 
 new_key_type! { pub struct RaceId; }
-
-pub(crate) type RaceMap = SlotMap<RaceId, Race>;
 
 pub(crate) const MAX_RACERS: usize = 8;
 

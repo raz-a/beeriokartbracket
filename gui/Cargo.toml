@@ -1,0 +1,9 @@
+[package]
+name = "beeriokartbracket-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+beeriokartbracket = { path = ".." }
+eframe = "0.29"
+image = { version = "0.25", default-features = false, features = ["png"] }

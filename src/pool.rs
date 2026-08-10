@@ -5,10 +5,11 @@ use std::num::NonZero;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use slotmap::SlotMap;
 
 use crate::TournamentError;
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantScore, ParticipantView};
-use crate::race::{MAX_RACERS, Race, RaceId, RaceMap, RaceRuleset, RaceView};
+use crate::race::{MAX_RACERS, Race, RaceId, RaceRuleset, RaceView};
 use crate::race_group::RaceGroupTracker;
 use crate::view::Viewable;
 
@@ -78,6 +79,9 @@ impl PoolResult {
 }
 
 #[derive(Debug)]
+struct RaceWithBucket(Race, usize);
+
+#[derive(Debug)]
 pub(crate) struct Pool {
     current_bucket: DrainingBucket,
     next_bucket: FillingBucket,
@@ -85,7 +89,7 @@ pub(crate) struct Pool {
     max_round: usize,
     number_of_participants: usize,
     current_race: Option<Race>,
-    completed_races: RaceMap,
+    completed_races: SlotMap<RaceId, RaceWithBucket>,
     rng: StdRng,
 }
 
@@ -123,7 +127,8 @@ impl Pool {
             // Move the completed race participants to the next bucket.
             let participants: Vec<ParticipantId> = race.get_racers().collect();
             self.next_bucket.push_participants(&participants);
-            self.completed_races.insert(race);
+            self.completed_races
+                .insert(RaceWithBucket(race, self.current_round));
         }
 
         debug_assert!(self.current_race.is_none());
@@ -161,7 +166,9 @@ impl Pool {
     }
 
     pub fn completed_race(&mut self, id: RaceId) -> Option<&mut Race> {
-        self.completed_races.get_mut(id)
+        self.completed_races
+            .get_mut(id)
+            .map(|RaceWithBucket(race, _)| race)
     }
 
     pub fn is_complete(&self) -> bool {
@@ -175,7 +182,7 @@ impl Pool {
 
         let mut scores = HashMap::new();
 
-        for (_, race) in self.completed_races.iter() {
+        for (_, RaceWithBucket(race, _)) in self.completed_races.iter() {
             debug_assert!(race.is_complete());
 
             for &(racer, place) in race.get_racers_and_placements() {
@@ -222,7 +229,7 @@ impl Pool {
             .map(|participant| (participant.get_id(), [0; MAX_RACERS]))
             .collect();
 
-        for (_, race) in &self.completed_races {
+        for (_, RaceWithBucket(race, _)) in &self.completed_races {
             for (racer, placement) in race.get_racers_and_placements() {
                 let placement = placement.expect("Race is complete so placement is valid");
 
@@ -264,7 +271,7 @@ impl Pool {
 pub struct PoolView {
     pub current_round: usize,
     pub max_rounds: usize,
-    pub completed_races: Vec<(RaceId, RaceView)>,
+    pub completed_races: Vec<(RaceId, RaceView, usize)>,
     pub current_race: Option<RaceView>,
     pub remaining_racers_in_round: Vec<ParticipantView>,
     pub completed_racers_in_round: Vec<ParticipantView>,
@@ -284,7 +291,7 @@ impl Viewable<PoolView> for Pool {
             completed_races: self
                 .completed_races
                 .iter()
-                .map(|(id, race)| (id, race.view(id_map)))
+                .map(|(id, RaceWithBucket(race, bucket))| (id, race.view(id_map), *bucket))
                 .collect(),
             current_race: self.current_race.as_ref().map(|race| race.view(id_map)),
             remaining_racers_in_round: self
@@ -372,7 +379,7 @@ mod tests {
         let mut pool = Pool::new(1, &make_participants(8), 0).unwrap();
         pool.current_round = pool.max_round;
         for race in races {
-            pool.completed_races.insert(race);
+            pool.completed_races.insert(RaceWithBucket(race, 0));
         }
         pool
     }

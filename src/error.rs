@@ -14,4 +14,5 @@ pub enum TournamentError {
     ResultsDontMatchRace,
     BracketSetAlreadyStarted,
     InvalidBracketSetSize,
+    InvalidGroupConfigurations,
 }

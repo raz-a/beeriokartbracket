@@ -58,12 +58,21 @@ impl Tournament {
                 Ok(())
             }
             TournamentPhase::Pools(pool) => {
-                if pool.is_complete() {
-                    self.phase = TournamentPhase::Bracket(Box::new(Bracket));
-                    Ok(())
-                } else {
-                    Err(TournamentError::PoolsNotCompleted)
+                if !pool.is_complete() {
+                    return Err(TournamentError::PoolsNotCompleted);
                 }
+
+                let results = pool
+                    .get_results(self.config.bracket_size.get())
+                    .ok_or(TournamentError::PoolsNotCompleted)?;
+                let racers = results.advanced_ids();
+
+                self.phase = TournamentPhase::Bracket(Box::new(Bracket::new(
+                    self.config.bracket_races_per_round.get(),
+                    &racers,
+                )?));
+
+                Ok(())
             }
             TournamentPhase::Bracket(_) => todo!(),
             TournamentPhase::Gauntlet => todo!(),
@@ -172,7 +181,9 @@ impl Viewable<TournamentView> for Tournament {
                 pool.get_results(self.config.bracket_size.get())
                     .map(|r| r.view(id_map)),
             )),
-            TournamentPhase::Bracket(_) => TournamentView::Bracket,
+            TournamentPhase::Bracket(bracket) => {
+                TournamentView::Bracket(bracket.as_ref().view(id_map))
+            }
             TournamentPhase::Gauntlet => TournamentView::Gauntlet,
             TournamentPhase::Complete => TournamentView::Complete,
         }

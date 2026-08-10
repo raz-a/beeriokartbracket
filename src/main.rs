@@ -14,7 +14,7 @@ fn main() {
         match view {
             TournamentView::Registration(reg) => {
                 println!(
-                    "\ncommands: add <name> | remove <n> | set <pool_rounds> <bracket_size> | start | quit"
+                    "\ncommands: add <name> | addn <count> | remove <n> | set <pool_rounds> <bracket_size> | start | quit"
                 );
 
                 let Some(line) = prompt("> ") else { break };
@@ -22,6 +22,22 @@ fn main() {
 
                 if line.is_empty() {
                     continue;
+                } else if let Some(rest) = line.strip_prefix("addn ") {
+                    match rest.trim().parse::<usize>() {
+                        Ok(count) if count > 0 => {
+                            // Continue numbering from the current roster so repeats keep unique names.
+                            let start = reg.participants.len();
+                            for i in 1..=count {
+                                if let Err(e) =
+                                    tournament.add_participant(&format!("Player{}", start + i))
+                                {
+                                    println!("error: {e:?}");
+                                    break;
+                                }
+                            }
+                        }
+                        _ => println!("usage: addn <count> (count >= 1)"),
+                    }
                 } else if let Some(name) = line.strip_prefix("add ") {
                     if let Err(e) = tournament.add_participant(name.trim()) {
                         println!("error: {e:?}");
@@ -101,6 +117,13 @@ fn main() {
                     break;
                 } else {
                     println!("unknown command");
+                }
+            }
+            TournamentView::Bracket(_) => {
+                println!("\ncommands: quit");
+                let Some(line) = prompt("> ") else { break };
+                if line.trim() == "quit" {
+                    break;
                 }
             }
             _ => {
@@ -183,7 +206,51 @@ fn render(view: &TournamentView) {
                 println!("  eliminated: {}", results.eliminated.len());
             }
         }
-        TournamentView::Bracket => print_header("Bracket"),
+        TournamentView::Bracket(bracket) => {
+            print_header("Bracket");
+
+            println!("  winners bracket:");
+            for (i, round) in bracket.winners.iter().enumerate() {
+                println!("    round {}:", i + 1);
+                for (j, set) in round.sets.iter().enumerate() {
+                    if set.racers.is_empty() {
+                        println!("      heat {} - {} empty slots", j + 1, set.expected_size);
+                    } else {
+                        let names: Vec<&str> = set.racers.iter().map(|r| r.name.as_str()).collect();
+                        println!(
+                            "      heat {} ({}/{}) - {}",
+                            j + 1,
+                            set.racers.len(),
+                            set.expected_size,
+                            names.join(", ")
+                        );
+                    }
+                }
+            }
+
+            println!("  losers bracket:");
+            for (i, round) in bracket.losers.iter().enumerate() {
+                let label = match round.from_wb_round {
+                    Some(r) => format!("intake from winners round {}", r + 1),
+                    None => "consolidation".to_string(),
+                };
+                println!("    round {} - {}:", i + 1, label);
+                for (j, set) in round.sets.iter().enumerate() {
+                    if set.racers.is_empty() {
+                        println!("      heat {} - {} empty slots", j + 1, set.expected_size);
+                    } else {
+                        let names: Vec<&str> = set.racers.iter().map(|r| r.name.as_str()).collect();
+                        println!(
+                            "      heat {} ({}/{}) - {}",
+                            j + 1,
+                            set.racers.len(),
+                            set.expected_size,
+                            names.join(", ")
+                        );
+                    }
+                }
+            }
+        }
         TournamentView::Gauntlet => print_header("Gauntlet"),
         TournamentView::Complete => print_header("Complete"),
     }

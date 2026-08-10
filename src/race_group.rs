@@ -32,6 +32,10 @@ impl RaceGroupTracker {
         Err(NotEnoughParticipants)
     }
 
+    pub(crate) fn get_group_count(&self) -> usize {
+        self.full_race_count + self.small_race_count
+    }
+
     pub(crate) fn pop_group(&mut self) -> Option<usize> {
         if self.full_race_count > 0 {
             self.full_race_count -= 1;

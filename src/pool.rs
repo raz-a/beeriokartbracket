@@ -70,6 +70,13 @@ pub struct PoolResult {
     eliminated: Vec<ParticipantScore>,
 }
 
+impl PoolResult {
+    /// The advancing racers' ids, in the pool's finishing order.
+    pub fn advanced_ids(&self) -> Vec<ParticipantId> {
+        self.advanced.iter().map(|score| score.get_id()).collect()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Pool {
     current_bucket: DrainingBucket,

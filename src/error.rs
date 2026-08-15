@@ -15,4 +15,5 @@ pub enum TournamentError {
     BracketSetAlreadyStarted,
     InvalidBracketSetSize,
     InvalidGroupConfigurations,
+    InvalidBracketId,
 }

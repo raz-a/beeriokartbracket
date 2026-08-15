@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use slotmap::{SlotMap, new_key_type};
+
 use crate::participant::{ParticipantMap, ParticipantView};
 use crate::view::Viewable;
 use crate::{
@@ -7,6 +9,8 @@ use crate::{
     race::{MAX_RACERS, Race},
     race_group::RaceGroupTracker,
 };
+
+new_key_type! { pub struct BracketSetId; }
 
 #[derive(Debug)]
 struct BracketSet {
@@ -109,7 +113,7 @@ enum BracketRoundKind {
 
 #[derive(Debug)]
 struct BracketRound {
-    sets: Vec<BracketSet>,
+    sets: Vec<BracketSetId>,
     kind: BracketRoundKind,
 }
 
@@ -124,10 +128,30 @@ pub struct Bracket {
     winners: Vec<BracketRound>,
     losers: Vec<BracketRound>,
     races_per_set: usize,
+    bracket_sets: SlotMap<BracketSetId, BracketSet>,
 }
 
 impl Bracket {
     pub fn new(races_per_set: usize, racers: &[ParticipantId]) -> Result<Self, TournamentError> {
+        let mut bracket_sets = SlotMap::with_key();
+        let winners = Self::build_winners(races_per_set, racers, &mut bracket_sets)?;
+        let losers = Self::build_losers(&winners, races_per_set, &mut bracket_sets)?;
+
+        Ok(Self {
+            winners,
+            losers,
+            races_per_set,
+            bracket_sets,
+        })
+    }
+
+    /// Builds the winners bracket, seeding round-one heats with `racers` and pre-building the
+    /// remaining rounds as empty.
+    fn build_winners(
+        races_per_set: usize,
+        racers: &[ParticipantId],
+        bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
+    ) -> Result<Vec<BracketRound>, TournamentError> {
         // Construct groups of winners sets that ensure no races have less than 6 partiticpants and
         // also each race has the same number of participants +/- 1.
         //
@@ -161,16 +185,16 @@ impl Bracket {
                 .pop_group()
                 .ok_or(TournamentError::InvalidGroupConfigurations)?;
 
-            let bracket = winners[0]
-                .sets
-                .push_mut(BracketSet::new(races_per_set, group_size)?);
+            let mut bracket = BracketSet::new(races_per_set, group_size)?;
             bracket.add_racers(&racers[racer_idx..racer_idx + group_size])?;
+            winners[0].sets.push(bracket_sets.insert(bracket));
+
             racer_idx += group_size;
 
             if i.is_multiple_of(2) && winners.len() > 1 {
                 winners[1]
                     .sets
-                    .push(BracketSet::new(races_per_set, MAX_RACERS)?);
+                    .push(bracket_sets.insert(BracketSet::new(races_per_set, MAX_RACERS)?));
             }
         }
 
@@ -180,10 +204,10 @@ impl Bracket {
                 .pop_group()
                 .ok_or(TournamentError::InvalidGroupConfigurations)?;
 
-            let bracket = winners[1]
-                .sets
-                .push_mut(BracketSet::new(races_per_set, group_size)?);
+            let mut bracket = BracketSet::new(races_per_set, group_size)?;
             bracket.add_racers(&racers[racer_idx..racer_idx + group_size])?;
+            winners[1].sets.push(bracket_sets.insert(bracket));
+
             racer_idx += group_size;
         }
 
@@ -196,13 +220,21 @@ impl Bracket {
             for _ in 0..set_count {
                 winners[round]
                     .sets
-                    .push(BracketSet::new(races_per_set, MAX_RACERS)?);
+                    .push(bracket_sets.insert(BracketSet::new(races_per_set, MAX_RACERS)?));
             }
         }
 
-        // Losers bracket, pre-built empty: one intake round per winners round
-        // (its droppers + prior survivors), plus consolidation rounds to shrink
-        // down to a single heat of finalists. All sizes are a function of the field.
+        Ok(winners)
+    }
+
+    /// Builds the losers bracket, pre-built empty: one intake round per winners round
+    /// (its droppers + prior survivors), plus consolidation rounds to shrink
+    /// down to a single heat of finalists. All sizes are a function of the field.
+    fn build_losers(
+        winners: &[BracketRound],
+        races_per_set: usize,
+        bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
+    ) -> Result<Vec<BracketRound>, TournamentError> {
         let mut losers = Vec::new();
         let mut carried: usize = 0;
 
@@ -210,10 +242,11 @@ impl Bracket {
             let droppers: usize = round_sets
                 .sets
                 .iter()
-                .map(|set| set.expected_size() - ADVANCERS_PER_SET)
+                .map(|&id| bracket_sets[id].expected_size() - ADVANCERS_PER_SET)
                 .sum();
 
-            let sets = Self::split_losers_sets(carried + droppers, races_per_set)?;
+            let sets = Self::split_losers_sets(carried + droppers, races_per_set, bracket_sets)?;
+
             carried = ADVANCERS_PER_SET * sets.len();
             losers.push(BracketRound {
                 sets,
@@ -221,7 +254,7 @@ impl Bracket {
             });
 
             while carried > ADVANCERS_PER_SET {
-                let sets = Self::split_losers_sets(carried, races_per_set)?;
+                let sets = Self::split_losers_sets(carried, races_per_set, bracket_sets)?;
                 carried = ADVANCERS_PER_SET * sets.len();
                 losers.push(BracketRound {
                     sets,
@@ -235,22 +268,19 @@ impl Bracket {
             "losers bracket must reduce to exactly one heat of finalists"
         );
 
-        Ok(Self {
-            winners,
-            losers,
-            races_per_set,
-        })
+        Ok(losers)
     }
 
     /// Splits `pool` racers into empty losers-bracket sets of `4..=8`, fewest heats.
     fn split_losers_sets(
         pool: usize,
         races_per_set: usize,
-    ) -> Result<Vec<BracketSet>, TournamentError> {
+        bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
+    ) -> Result<Vec<BracketSetId>, TournamentError> {
         let mut tracker = RaceGroupTracker::new(pool, MIN_LOSERS_BRACKET_RACE_SIZE)?;
         let mut sets = Vec::with_capacity(tracker.get_group_count());
         while let Some(size) = tracker.pop_group() {
-            sets.push(BracketSet::new(races_per_set, size)?);
+            sets.push(bracket_sets.insert(BracketSet::new(races_per_set, size)?));
         }
         Ok(sets)
     }
@@ -296,7 +326,11 @@ impl Viewable<BracketView> for Bracket {
                 BracketRoundKind::LosersIntake { wb_round } => Some(wb_round),
                 BracketRoundKind::Winners | BracketRoundKind::LosersConsolidate => None,
             },
-            sets: round.sets.iter().map(|set| set.view(id_map)).collect(),
+            sets: round
+                .sets
+                .iter()
+                .map(|&id| self.bracket_sets[id].view(id_map))
+                .collect(),
         };
 
         BracketView {
@@ -317,8 +351,10 @@ mod tests {
         (0..n).map(|_| slots.insert(())).collect()
     }
 
-    fn set_sizes(sets: &[BracketSet]) -> Vec<usize> {
-        sets.iter().map(|set| set.expected_size()).collect()
+    fn set_sizes(bracket: &Bracket, sets: &[BracketSetId]) -> Vec<usize> {
+        sets.iter()
+            .map(|&id| bracket.bracket_sets[id].expected_size())
+            .collect()
     }
 
     fn lb_finalists(bracket: &Bracket) -> usize {
@@ -330,8 +366,8 @@ mod tests {
         let bracket = Bracket::new(3, &make_participants(16)).unwrap();
 
         // Winners: two 8-heats, then a single 8-heat final.
-        assert_eq!(set_sizes(&bracket.winners[0].sets), vec![8, 8]);
-        assert_eq!(set_sizes(&bracket.winners[1].sets), vec![8]);
+        assert_eq!(set_sizes(&bracket, &bracket.winners[0].sets), vec![8, 8]);
+        assert_eq!(set_sizes(&bracket, &bracket.winners[1].sets), vec![8]);
 
         // Losers: one intake round per winners round, each a single 8-heat, no consolidation.
         assert_eq!(bracket.losers.len(), 2);
@@ -343,8 +379,8 @@ mod tests {
             bracket.losers[1].kind,
             BracketRoundKind::LosersIntake { wb_round: 1 }
         ));
-        assert_eq!(set_sizes(&bracket.losers[0].sets), vec![8]);
-        assert_eq!(set_sizes(&bracket.losers[1].sets), vec![8]);
+        assert_eq!(set_sizes(&bracket, &bracket.losers[0].sets), vec![8]);
+        assert_eq!(set_sizes(&bracket, &bracket.losers[1].sets), vec![8]);
         assert_eq!(lb_finalists(&bracket), 4);
     }
 

@@ -248,6 +248,7 @@ impl Pool {
         });
 
         let tiebreaker_seats = rank - advanced.len();
+        tied.sort_by(|a, b| a.get_id().cmp(&b.get_id()));
         let mut tied = tied.into_iter();
         advanced.extend(tied.by_ref().take(tiebreaker_seats));
         eliminated.extend(tied);

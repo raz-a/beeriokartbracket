@@ -6,14 +6,14 @@ use crate::participant::{ParticipantMap, ParticipantView};
 use crate::view::Viewable;
 use crate::{
     ParticipantId, RaceRuleset, TournamentError,
-    race::{MAX_RACERS, Race},
+    race::{MAX_RACERS, Race, RaceView},
     race_group::RaceGroupTracker,
 };
 
 new_key_type! { pub struct BracketSetId; }
 
 #[derive(Debug)]
-struct BracketSet {
+pub(crate) struct BracketSet {
     races: Vec<Race>,
     expected_size: usize,
 }
@@ -45,7 +45,7 @@ impl BracketSet {
         })
     }
 
-    fn race_count(&self) -> usize {
+    fn racer_count(&self) -> usize {
         self.races
             .first()
             .map_or(0, |race| race.get_racers().count())
@@ -59,14 +59,18 @@ impl BracketSet {
         self.races.iter().any(|race| race.is_complete())
     }
 
-    fn is_completed(&self) -> bool {
+    pub fn is_completed(&self) -> bool {
         self.races.iter().all(|race| race.is_complete())
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.expected_size() == self.racer_count()
     }
 
     pub fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
         if self.is_started() {
             Err(TournamentError::BracketSetAlreadyStarted)
-        } else if self.race_count() + racers.len() > self.expected_size {
+        } else if self.racer_count() + racers.len() > self.expected_size {
             Err(TournamentError::RaceIsFull)
         } else {
             for race in self.races.iter_mut() {
@@ -143,6 +147,33 @@ impl Bracket {
             races_per_set,
             bracket_sets,
         })
+    }
+
+    pub fn set(&mut self, id: BracketSetId) -> Result<&mut BracketSet, TournamentError> {
+        let set = self
+            .bracket_sets
+            .get_mut(id)
+            .ok_or(TournamentError::InvalidBracketId)?;
+
+        if !set.is_ready() {
+            return Err(TournamentError::BracketNotReady);
+        }
+
+        Ok(set)
+    }
+
+    pub fn active_set(&self) -> Option<BracketSetId> {
+        for (id, set) in self.bracket_sets.iter() {
+            if set.is_ready() && !set.is_completed() {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    pub fn advance(&mut self) -> Result<bool, TournamentError> {
+        Err(TournamentError::NotImplemented)
     }
 
     /// Builds the winners bracket, seeding round-one heats with `racers` and pre-building the
@@ -290,19 +321,25 @@ impl Bracket {
 pub struct BracketSetView {
     pub expected_size: usize,
     pub racers: Vec<ParticipantView>,
+    pub races: Vec<RaceView>,
+    /// Index of the next race to run; races before it are complete.
+    pub current_race_index: usize,
+    /// Whether the heat is fully seeded and can accept results.
+    pub is_ready: bool,
 }
 
 #[derive(Debug)]
 pub struct BracketRoundView {
     /// For a losers round: `Some(r)` = intake fed by winners round `r`; `None` = consolidation.
     pub from_wb_round: Option<usize>,
-    pub sets: Vec<BracketSetView>,
+    pub sets: Vec<(BracketSetId, BracketSetView)>,
 }
 
 #[derive(Debug)]
 pub struct BracketView {
     pub winners: Vec<BracketRoundView>,
     pub losers: Vec<BracketRoundView>,
+    pub active_set: Option<BracketSetId>,
 }
 
 impl Viewable<BracketSetView> for BracketSet {
@@ -315,6 +352,9 @@ impl Viewable<BracketSetView> for BracketSet {
         BracketSetView {
             expected_size: self.expected_size,
             racers,
+            races: self.races.iter().map(|race| race.view(id_map)).collect(),
+            current_race_index: self.current_race_index(),
+            is_ready: self.is_ready(),
         }
     }
 }
@@ -329,13 +369,14 @@ impl Viewable<BracketView> for Bracket {
             sets: round
                 .sets
                 .iter()
-                .map(|&id| self.bracket_sets[id].view(id_map))
+                .map(|&id| (id, self.bracket_sets[id].view(id_map)))
                 .collect(),
         };
 
         BracketView {
             winners: self.winners.iter().map(&round_view).collect(),
             losers: self.losers.iter().map(&round_view).collect(),
+            active_set: self.active_set(),
         }
     }
 }

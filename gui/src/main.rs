@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::num::NonZero;
 
 use beeriokartbracket::{
-    BracketRoundView, BracketSetView, BracketView, Config, ParticipantId, ParticipantView,
-    Placement, PoolResultView, PoolView, RaceId, RaceRuleset, RaceView, RegistrationView,
-    Tournament, TournamentError, TournamentView,
+    BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, ParticipantId,
+    ParticipantView, Placement, PoolResultView, PoolView, RaceId, RaceRuleset, RaceView,
+    RegistrationView, Tournament, TournamentError, TournamentView,
 };
 use eframe::egui;
 
@@ -29,6 +29,7 @@ enum Action {
     Start,
     NextRace(Vec<(ParticipantId, Option<Placement>)>),
     EditRace(RaceId, Vec<(ParticipantId, Option<Placement>)>),
+    UpdateBracketSet(BracketSetId, usize, Vec<(ParticipantId, Option<Placement>)>),
     Next,
 }
 
@@ -43,6 +44,10 @@ struct TournamentApp {
     placement_inputs: HashMap<ParticipantId, String>,
     // Place text entry for correcting a completed race, keyed by (race, racer).
     race_edits: HashMap<(RaceId, ParticipantId), String>,
+    // Place text entry for a bracket set's races, keyed by (set, race index, racer).
+    bracket_edits: HashMap<(BracketSetId, usize, ParticipantId), String>,
+    // Last-frame measured heat-card heights, for stable tree layout.
+    bracket_heights: HashMap<BracketSetId, f32>,
     show_scores: bool,
     status: String,
     error: Option<String>,
@@ -61,6 +66,8 @@ impl Default for TournamentApp {
             races_per_round: 3,
             placement_inputs: HashMap::new(),
             race_edits: HashMap::new(),
+            bracket_edits: HashMap::new(),
+            bracket_heights: HashMap::new(),
             show_scores: false,
             status: String::new(),
             error: None,
@@ -73,6 +80,7 @@ impl Default for TournamentApp {
 impl TournamentApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         apply_theme(&cc.egui_ctx);
+        install_fonts(&cc.egui_ctx);
         Self {
             logo: load_logo(&cc.egui_ctx),
             background: load_background(&cc.egui_ctx),
@@ -159,7 +167,7 @@ impl eframe::App for TournamentApp {
             egui::ScrollArea::vertical().show(ui, |ui| match view {
                 TournamentView::Registration(reg) => self.registration_ui(ui, reg, &mut action),
                 TournamentView::Pools(pool) => self.pools_ui(ui, pool.0, pool.1, &mut action),
-                TournamentView::Bracket(bracket) => bracket_ui(ui, bracket),
+                TournamentView::Bracket(bracket) => self.bracket_ui(ui, bracket, &mut action),
                 TournamentView::Gauntlet => {
                     ui.label("Not yet implemented.");
                 }
@@ -372,8 +380,7 @@ impl TournamentApp {
                                             "{emoji}  Round {round} · {kind}"
                                         ))
                                         .color(egui::Color32::BLACK)
-                                        .strong()
-                                        .size(24.0),
+                                        .font(title_font(24.0)),
                                     );
                                 });
 
@@ -635,7 +642,7 @@ impl TournamentApp {
                     ui.label(
                         egui::RichText::new(format!("{emoji}  {kind}"))
                             .color(AMBER)
-                            .strong(),
+                            .font(title_font(18.0)),
                     );
 
                     ui.scope(|ui| {
@@ -756,6 +763,16 @@ impl TournamentApp {
                 .tournament
                 .update_completed_race(id, results)
                 .map(|_| "Race corrected".to_owned()),
+            Action::UpdateBracketSet(id, race_index, results) => self
+                .tournament
+                .update_bracket_set(id, race_index, results)
+                .map(|completed| {
+                    if completed {
+                        "Heat complete.".to_owned()
+                    } else {
+                        "Race result saved.".to_owned()
+                    }
+                }),
             Action::Next => self
                 .tournament
                 .next_phase()
@@ -814,124 +831,372 @@ fn standings_column(
         });
 }
 
-fn bracket_ui(ui: &mut egui::Ui, bracket: BracketView) {
-    banner(
-        ui,
-        "Bracket — view only (result entry isn't wired up yet)",
-        18.0,
-    );
-    ui.add_space(10.0);
+impl TournamentApp {
+    fn bracket_ui(&mut self, ui: &mut egui::Ui, bracket: BracketView, action: &mut Option<Action>) {
+        banner(ui, "Bracket", 18.0);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Enter a place for each racer in every race; results save as you go.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(10.0);
 
-    egui::ScrollArea::horizontal()
-        .id_salt("bracket_scroll")
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            banner(ui, "Winners", 20.0);
-            ui.add_space(8.0);
-            draw_bracket_section(ui, &bracket.winners, false);
+        let active = bracket.active_set;
+        egui::ScrollArea::horizontal()
+            .id_salt("bracket_scroll")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                banner(ui, "Winners", 20.0);
+                ui.add_space(8.0);
+                self.draw_bracket_section(ui, &bracket.winners, false, active, action);
 
-            ui.add_space(28.0);
-            banner(ui, "Losers", 20.0);
-            ui.add_space(8.0);
-            draw_bracket_section(ui, &bracket.losers, true);
+                ui.add_space(28.0);
+                banner(ui, "Losers", 20.0);
+                ui.add_space(8.0);
+                self.draw_bracket_section(ui, &bracket.losers, true, active, action);
+            });
+    }
+
+    /// Draws one bracket half as columns of heat cards with connector elbows.
+    /// Seeded heats render as an editable racer x race grid that autosaves; empty
+    /// heats show a dashed placeholder.
+    fn draw_bracket_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        rounds: &[BracketRoundView],
+        is_losers: bool,
+        active_set: Option<BracketSetId>,
+        action: &mut Option<Action>,
+    ) {
+        if rounds.is_empty() {
+            ui.label(egui::RichText::new("No heats yet.").color(CREAM));
+            return;
+        }
+
+        // Pulsing accent for the heat awaiting results.
+        let pulse = ((ui.input(|i| i.time) * 2.5).sin() * 0.5 + 0.5) as f32;
+        let active_border = lerp_color(AMBER, AMBER_BRIGHT, pulse);
+        if active_set.is_some() {
+            ui.ctx().request_repaint();
+        }
+
+        // Every heat in the bracket shares the same race count.
+        let n_races = rounds
+            .iter()
+            .flat_map(|round| round.sets.iter())
+            .map(|(_, set)| set.races.len())
+            .next()
+            .unwrap_or(0);
+        let card_w =
+            2.0 * BRACKET_PAD + BRACKET_NAME_COL_W + n_races as f32 * (BRACKET_GRID_COL_W + 6.0);
+
+        // Card heights: measured last frame when available (heat grids are
+        // theme-sized), with an estimate as the first-paint fallback.
+        let estimate = |set: &BracketSetView| -> f32 {
+            if set.is_ready {
+                let rows = set.racers.len().max(1) as f32;
+                2.0 * BRACKET_PAD
+                    + BRACKET_GRID_TITLE_H
+                    + BRACKET_GRID_HEAD_H
+                    + rows * BRACKET_GRID_ROW_H
+            } else {
+                BRACKET_PAD
+                    + BRACKET_HEADER_H
+                    + set.expected_size as f32 * BRACKET_LINE_H
+                    + BRACKET_PAD
+            }
+        };
+        let heights: Vec<Vec<f32>> = rounds
+            .iter()
+            .map(|round| {
+                round
+                    .sets
+                    .iter()
+                    .map(|(id, set)| {
+                        if set.is_ready {
+                            self.bracket_heights
+                                .get(id)
+                                .copied()
+                                .unwrap_or_else(|| estimate(set))
+                        } else {
+                            estimate(set)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Canvas is as tall as the round that needs the most vertical space.
+        let mut content_h: f32 = 0.0;
+        for hs in &heights {
+            let h: f32 = BRACKET_ROW_GAP + hs.iter().map(|x| x + BRACKET_ROW_GAP).sum::<f32>();
+            content_h = content_h.max(h);
+        }
+        let total_h = BRACKET_COL_HEADER + content_h;
+        let total_w = rounds.len() as f32 * (card_w + BRACKET_COL_GAP);
+
+        let (canvas, _) =
+            ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
+
+        // Position every card first; connectors need neighbouring columns' rects.
+        let mut round_rects: Vec<Vec<egui::Rect>> = Vec::with_capacity(rounds.len());
+        for (r, round) in rounds.iter().enumerate() {
+            let x = canvas.min.x + r as f32 * (card_w + BRACKET_COL_GAP) + BRACKET_COL_GAP * 0.5;
+            let n = round.sets.len().max(1);
+            let mut rects = Vec::with_capacity(round.sets.len());
+            for (j, &h) in heights[r].iter().enumerate() {
+                let cy =
+                    canvas.min.y + BRACKET_COL_HEADER + content_h * (j as f32 + 0.5) / n as f32;
+                rects.push(egui::Rect::from_min_size(
+                    egui::pos2(x, cy - h * 0.5),
+                    egui::vec2(card_w, h),
+                ));
+            }
+            round_rects.push(rects);
+        }
+
+        // Connectors and column titles paint under the cards.
+        let painter = ui.painter_at(canvas);
+        let wire = egui::Stroke::new(1.5_f32, AMBER);
+        for r in 0..rounds.len().saturating_sub(1) {
+            let cur = &round_rects[r];
+            let next = &round_rects[r + 1];
+            if next.is_empty() || cur.len() != next.len() * 2 {
+                continue;
+            }
+            for (j, child) in cur.iter().enumerate() {
+                let parent = next[j / 2];
+                let mid_x = child.right() + BRACKET_COL_GAP * 0.5;
+                let cy = child.center().y;
+                let py = parent.center().y;
+                painter.line_segment([egui::pos2(child.right(), cy), egui::pos2(mid_x, cy)], wire);
+                painter.line_segment([egui::pos2(mid_x, cy), egui::pos2(mid_x, py)], wire);
+                painter.line_segment([egui::pos2(mid_x, py), egui::pos2(parent.left(), py)], wire);
+            }
+        }
+        for (r, round) in rounds.iter().enumerate() {
+            let cx = canvas.min.x
+                + r as f32 * (card_w + BRACKET_COL_GAP)
+                + BRACKET_COL_GAP * 0.5
+                + card_w * 0.5;
+            paint_chip_text(
+                &painter,
+                egui::pos2(cx, canvas.min.y + BRACKET_COL_HEADER * 0.5),
+                &round_title(r, round, is_losers),
+            );
+        }
+
+        // Cards on top: editable grids for seeded heats, placeholders otherwise.
+        let mut measured: Vec<(BracketSetId, f32)> = Vec::new();
+        for (r, round) in rounds.iter().enumerate() {
+            for (j, (id, set)) in round.sets.iter().enumerate() {
+                let rect = round_rects[r][j];
+                if set.is_ready {
+                    let is_active = active_set == Some(*id);
+                    let h = self.bracket_grid_card(
+                        ui,
+                        rect,
+                        j,
+                        *id,
+                        set,
+                        is_active,
+                        active_border,
+                        action,
+                    );
+                    measured.push((*id, h));
+                } else {
+                    let lines: Vec<String> =
+                        (0..set.expected_size).map(|_| "—".to_owned()).collect();
+                    paint_heat_card(&painter, rect, j, set, &lines, false, active_border);
+                }
+            }
+        }
+
+        // Feed measured heights back for next frame; repaint once if the layout shifted.
+        let mut shifted = false;
+        for (id, h) in measured {
+            let changed = match self.bracket_heights.insert(id, h) {
+                Some(old) => (old - h).abs() > 0.5,
+                None => true,
+            };
+            shifted |= changed;
+        }
+        if shifted {
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// One heat as an editable grid: a row per racer, a place dropdown per race.
+    /// A race is autosaved whenever its entered places differ from the stored ones.
+    #[allow(clippy::too_many_arguments)]
+    fn bracket_grid_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        index: usize,
+        set_id: BracketSetId,
+        set: &BracketSetView,
+        is_active: bool,
+        active_border: egui::Color32,
+        action: &mut Option<Action>,
+    ) -> f32 {
+        let racer_count = set.racers.len() as u8;
+        let (stroke_w, stroke_col) = if is_active {
+            (2.5_f32, active_border)
+        } else {
+            (1.5_f32, AMBER)
+        };
+        let header_color = if is_active { active_border } else { AMBER };
+
+        let resp = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+            egui::Frame::none()
+                .fill(CARD_BG)
+                .stroke(egui::Stroke::new(stroke_w, stroke_col))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(BRACKET_PAD))
+                .show(ui, |ui| {
+                    ui.set_width(rect.width() - 2.0 * BRACKET_PAD);
+                    // Compact, predictable widget metrics so the grid stays tight.
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                    ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+                    ui.spacing_mut().interact_size = egui::vec2(52.0, 22.0);
+
+                    // The current round stays editable but is visually flagged.
+                    let current = set.current_race_index;
+
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Heat {} · {}/{}",
+                            index + 1,
+                            set.racers.len(),
+                            set.expected_size
+                        ))
+                        .color(header_color)
+                        .font(title_font(16.0)),
+                    );
+
+                    // Column header: Player, then one column per race with its ruleset.
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [BRACKET_NAME_COL_W, 18.0],
+                            egui::Label::new(
+                                egui::RichText::new("Player")
+                                    .color(AMBER)
+                                    .font(title_font(14.0)),
+                            ),
+                        );
+                        for (r, race) in set.races.iter().enumerate() {
+                            let emoji = match race.ruleset {
+                                RaceRuleset::Beerio => "🍺",
+                                RaceRuleset::Vanilla => "🏁",
+                            };
+                            let label = format!("R{} {}", r + 1, emoji);
+                            let text = if r == current {
+                                egui::RichText::new(label)
+                                    .color(egui::Color32::BLACK)
+                                    .background_color(AMBER_BRIGHT)
+                                    .font(title_font(14.0))
+                            } else {
+                                egui::RichText::new(label)
+                                    .color(AMBER)
+                                    .font(title_font(14.0))
+                            };
+                            ui.add_sized([BRACKET_GRID_COL_W, 18.0], egui::Label::new(text));
+                        }
+                    });
+
+                    // One row per racer; the roster order is shared across the heat's races.
+                    for row in 0..set.racers.len() {
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [BRACKET_NAME_COL_W, 26.0],
+                                egui::Label::new(
+                                    egui::RichText::new(set.racers[row].name.as_str())
+                                        .color(player_color(row))
+                                        .font(mario_font(18.0)),
+                                ),
+                            );
+                            for (r, race) in set.races.iter().enumerate() {
+                                let participant = &race.racers[row].0;
+                                let existing = race.racers[row].1;
+                                let buf = self
+                                    .bracket_edits
+                                    .entry((set_id, r, participant.id))
+                                    .or_insert_with(|| {
+                                        existing
+                                            .map_or(String::new(), |p| p.placement().to_string())
+                                    });
+                                if r == current {
+                                    ui.scope(|ui| {
+                                        let v = ui.visuals_mut();
+                                        v.widgets.inactive.weak_bg_fill = CURRENT_COL_TINT;
+                                        v.widgets.inactive.bg_fill = CURRENT_COL_TINT;
+                                        v.widgets.hovered.weak_bg_fill = CURRENT_COL_TINT;
+                                        place_input(
+                                            ui,
+                                            ("bracket", set_id, r, participant.id),
+                                            buf,
+                                            racer_count,
+                                        );
+                                    });
+                                } else {
+                                    place_input(
+                                        ui,
+                                        ("bracket", set_id, r, participant.id),
+                                        buf,
+                                        racer_count,
+                                    );
+                                }
+                            }
+                        });
+                    }
+
+                    // Autosave: submit any race whose entered places differ from the stored ones.
+                    for (r, race) in set.races.iter().enumerate() {
+                        let mut differs = false;
+                        let results: Vec<(ParticipantId, Option<Placement>)> = race
+                            .racers
+                            .iter()
+                            .map(|(participant, existing)| {
+                                let entered = self
+                                    .bracket_edits
+                                    .get(&(set_id, r, participant.id))
+                                    .and_then(|s| s.trim().parse::<u8>().ok())
+                                    .and_then(|v| Placement::new(v).ok());
+                                if entered != *existing {
+                                    differs = true;
+                                }
+                                (participant.id, entered)
+                            })
+                            .collect();
+                        if differs {
+                            *action = Some(Action::UpdateBracketSet(set_id, r, results));
+                        }
+                    }
+                });
         });
+        resp.response.rect.height()
+    }
 }
 
 // Layout constants shared by the section layout and the card painter.
-const BRACKET_CARD_W: f32 = 264.0;
 const BRACKET_COL_GAP: f32 = 78.0;
 const BRACKET_COL_HEADER: f32 = 36.0;
 const BRACKET_HEADER_H: f32 = 28.0;
 const BRACKET_LINE_H: f32 = 22.0;
 const BRACKET_PAD: f32 = 11.0;
 const BRACKET_ROW_GAP: f32 = 22.0;
-
-/// Draws one bracket half (winners or losers) as columns of heat cards, with
-/// connector elbows wherever a round cleanly feeds the next (count halves).
-fn draw_bracket_section(ui: &mut egui::Ui, rounds: &[BracketRoundView], is_losers: bool) {
-    if rounds.is_empty() {
-        ui.label(egui::RichText::new("No heats yet.").color(CREAM));
-        return;
-    }
-
-    let lines_for = |set: &BracketSetView| -> Vec<String> {
-        if set.racers.is_empty() {
-            (0..set.expected_size).map(|_| "—".to_owned()).collect()
-        } else {
-            set.racers.iter().map(|r| r.name.clone()).collect()
-        }
-    };
-    let card_h = |n_lines: usize| {
-        BRACKET_PAD + BRACKET_HEADER_H + n_lines as f32 * BRACKET_LINE_H + BRACKET_PAD
-    };
-
-    // Canvas is as tall as the round that needs the most vertical space.
-    let mut content_h: f32 = 0.0;
-    for round in rounds {
-        let mut h = BRACKET_ROW_GAP;
-        for set in &round.sets {
-            h += card_h(lines_for(set).len()) + BRACKET_ROW_GAP;
-        }
-        content_h = content_h.max(h);
-    }
-    let total_h = BRACKET_COL_HEADER + content_h;
-    let total_w = rounds.len() as f32 * (BRACKET_CARD_W + BRACKET_COL_GAP);
-
-    let (canvas, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
-    let painter = ui.painter_at(canvas);
-
-    // Position every card first; connectors need neighbouring columns' rects.
-    let mut round_rects: Vec<Vec<egui::Rect>> = Vec::with_capacity(rounds.len());
-    for (r, round) in rounds.iter().enumerate() {
-        let x =
-            canvas.min.x + r as f32 * (BRACKET_CARD_W + BRACKET_COL_GAP) + BRACKET_COL_GAP * 0.5;
-        let n = round.sets.len().max(1);
-        let mut rects = Vec::with_capacity(round.sets.len());
-        for (j, set) in round.sets.iter().enumerate() {
-            let h = card_h(lines_for(set).len());
-            let cy = canvas.min.y + BRACKET_COL_HEADER + content_h * (j as f32 + 0.5) / n as f32;
-            rects.push(egui::Rect::from_min_size(
-                egui::pos2(x, cy - h * 0.5),
-                egui::vec2(BRACKET_CARD_W, h),
-            ));
-        }
-        round_rects.push(rects);
-    }
-
-    // Connectors first, so cards paint on top of the wires.
-    let wire = egui::Stroke::new(1.5_f32, AMBER);
-    for r in 0..rounds.len().saturating_sub(1) {
-        let cur = &round_rects[r];
-        let next = &round_rects[r + 1];
-        if next.is_empty() || cur.len() != next.len() * 2 {
-            continue;
-        }
-        for (j, child) in cur.iter().enumerate() {
-            let parent = next[j / 2];
-            let mid_x = child.right() + BRACKET_COL_GAP * 0.5;
-            let cy = child.center().y;
-            let py = parent.center().y;
-            painter.line_segment([egui::pos2(child.right(), cy), egui::pos2(mid_x, cy)], wire);
-            painter.line_segment([egui::pos2(mid_x, cy), egui::pos2(mid_x, py)], wire);
-            painter.line_segment([egui::pos2(mid_x, py), egui::pos2(parent.left(), py)], wire);
-        }
-    }
-
-    for (r, round) in rounds.iter().enumerate() {
-        let cx = canvas.min.x
-            + r as f32 * (BRACKET_CARD_W + BRACKET_COL_GAP)
-            + BRACKET_COL_GAP * 0.5
-            + BRACKET_CARD_W * 0.5;
-        paint_chip_text(
-            &painter,
-            egui::pos2(cx, canvas.min.y + BRACKET_COL_HEADER * 0.5),
-            &round_title(r, round, is_losers),
-        );
-        for (j, set) in round.sets.iter().enumerate() {
-            paint_heat_card(&painter, round_rects[r][j], j, set, &lines_for(set));
-        }
-    }
-}
+// Editable heat-grid metrics.
+const BRACKET_NAME_COL_W: f32 = 140.0;
+const BRACKET_GRID_COL_W: f32 = 72.0;
+const BRACKET_GRID_TITLE_H: f32 = 24.0;
+const BRACKET_GRID_HEAD_H: f32 = 22.0;
+const BRACKET_GRID_ROW_H: f32 = 30.0;
+// Fill behind the current round's place dropdowns.
+const CURRENT_COL_TINT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x6A, 0x24);
 
 fn round_title(index: usize, round: &BracketRoundView, is_losers: bool) -> String {
     match (is_losers, round.from_wb_round) {
@@ -943,7 +1208,7 @@ fn round_title(index: usize, round: &BracketRoundView, is_losers: bool) -> Strin
 
 /// A centered label sitting on a dark rounded chip (readable over the texture).
 fn paint_chip_text(painter: &egui::Painter, center: egui::Pos2, text: &str) {
-    let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(18.0), AMBER);
+    let galley = painter.layout_no_wrap(text.to_owned(), title_font(18.0), AMBER);
     let pad = egui::vec2(8.0, 3.0);
     let rect = egui::Rect::from_center_size(center, galley.size() + pad * 2.0);
     painter.rect_filled(
@@ -960,22 +1225,36 @@ fn paint_heat_card(
     index: usize,
     set: &BracketSetView,
     lines: &[String],
+    is_active: bool,
+    active_border: egui::Color32,
 ) {
     let rounding = egui::Rounding::same(8.0);
     painter.rect_filled(rect, rounding, CARD_BG);
-    painter.rect_stroke(rect, rounding, egui::Stroke::new(1.5_f32, AMBER));
+    if is_active {
+        // Bright pulsing border plus a soft outer ring to flag the set awaiting results.
+        painter.rect_stroke(
+            rect.expand(3.0),
+            egui::Rounding::same(11.0),
+            egui::Stroke::new(2.0_f32, active_border),
+        );
+        painter.rect_stroke(rect, rounding, egui::Stroke::new(3.0_f32, active_border));
+    } else {
+        painter.rect_stroke(rect, rounding, egui::Stroke::new(1.5_f32, AMBER));
+    }
 
+    let header_color = if is_active { active_border } else { AMBER };
     painter.text(
         rect.min + egui::vec2(BRACKET_PAD, BRACKET_PAD),
         egui::Align2::LEFT_TOP,
         format!(
-            "Heat {} · {}/{}",
+            "Heat {} · {}/{}{}",
             index + 1,
             set.racers.len(),
-            set.expected_size
+            set.expected_size,
+            if is_active { "  \u{25B6}" } else { "" }
         ),
         egui::FontId::proportional(17.0),
-        AMBER,
+        header_color,
     );
 
     let sep_y = rect.min.y + BRACKET_PAD + BRACKET_HEADER_H - 4.0;
@@ -1065,7 +1344,11 @@ fn banner(ui: &mut egui::Ui, text: &str, size: f32) {
         .rounding(6.0)
         .inner_margin(egui::Margin::symmetric(10.0, 4.0))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).color(AMBER).strong().size(size));
+            ui.label(
+                egui::RichText::new(text)
+                    .color(AMBER)
+                    .font(title_font(size)),
+            );
         });
 }
 
@@ -1126,7 +1409,11 @@ fn race_row(
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(name);
+                ui.label(
+                    egui::RichText::new(name)
+                        .color(player_color(row))
+                        .font(mario_font(20.0)),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     place_input(ui, id_source, buf, count);
                 });
@@ -1247,6 +1534,61 @@ fn load_texture(
     let (width, height) = image.dimensions();
     let color = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &image);
     Some(ctx.load_texture(name, color, options))
+}
+
+/// Registers the Mario display font as a named family alongside the defaults.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "mario".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/mario_font.ttf")),
+    );
+    fonts.font_data.insert(
+        "rushblade".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/rushblade_font.ttf")),
+    );
+
+    // Custom families fall back to the defaults so missing glyphs (emoji,
+    // punctuation) still render.
+    let fallback = fonts
+        .families
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for name in ["mario", "rushblade"] {
+        let mut family = vec![name.to_owned()];
+        family.extend(fallback.iter().cloned());
+        fonts
+            .families
+            .insert(egui::FontFamily::Name(name.into()), family);
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+/// A `FontId` for the Mario display font at `size`.
+fn mario_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name("mario".into()))
+}
+
+/// A `FontId` for the Rushblade title font at `size`.
+fn title_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name("rushblade".into()))
+}
+
+/// Mario-Kart-style slot color for the racer in position `index` (0-based).
+fn player_color(index: usize) -> egui::Color32 {
+    const COLORS: [egui::Color32; 8] = [
+        egui::Color32::from_rgb(0xE8, 0x40, 0x3C), // 1st  red
+        egui::Color32::from_rgb(0x46, 0x78, 0xE8), // 2nd  blue
+        egui::Color32::from_rgb(0x46, 0xC8, 0x54), // 3rd  green
+        egui::Color32::from_rgb(0xF5, 0xD3, 0x30), // 4th  yellow
+        egui::Color32::from_rgb(0xF2, 0x74, 0xC6), // 5th  pink
+        egui::Color32::from_rgb(0xF0, 0x8C, 0x30), // 6th  orange
+        egui::Color32::from_rgb(0x30, 0xC8, 0xC8), // 7th  teal
+        egui::Color32::from_rgb(0xA9, 0x64, 0xE8), // 8th  purple
+    ];
+    COLORS[index % COLORS.len()]
 }
 
 fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {

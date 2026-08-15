@@ -14,7 +14,7 @@ mod race_group;
 mod tournament;
 mod view;
 
-pub use bracket::{BracketRoundView, BracketSetView, BracketView};
+pub use bracket::{BracketRoundView, BracketSetId, BracketSetView, BracketView};
 pub use config::Config;
 pub use error::TournamentError;
 pub use participant::{ParticipantId, ParticipantView};

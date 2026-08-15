@@ -216,15 +216,17 @@ choice. Keep domain logic decoupled from whichever toolkit is picked.
 
 Run from the repository root.
 
-- Build: `cargo build` (release: `cargo build --release`)
-- Run: `cargo run`
-- Test (all): `cargo test`
-- Single test: `cargo test <test_name>` (substring match on the test's path,
-  e.g. `cargo test bracket::seeds_are_sorted`)
-- Tests in one module: `cargo test <module_path>::`
-- Show test stdout: `cargo test -- --nocapture`
-- Lint: `cargo clippy --all-targets` (fail on warnings:
-  `cargo clippy --all-targets -- -D warnings`)
+- Build: `cargo build --workspace` (release: `cargo build --workspace --release`).
+  Bare `cargo build` targets only the GUI (the default member).
+- Run the GUI: `cargo run` (the GUI is the default run target).
+- Test (all): `cargo test --workspace` (bare `cargo test` targets only the GUI;
+  the domain tests live in the library).
+- Single test: `cargo test --workspace <test_name>` (substring match on the
+  test's path, e.g. `cargo test --workspace bracket::seeds_are_sorted`)
+- Tests in one module: `cargo test --workspace <module_path>::`
+- Show test stdout: `cargo test --workspace -- --nocapture`
+- Lint: `cargo clippy --workspace --all-targets` (fail on warnings:
+  `cargo clippy --workspace --all-targets -- -D warnings`)
 - Format: `cargo fmt` (check only: `cargo fmt --check`)
 
 ## Conventions

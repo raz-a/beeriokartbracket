@@ -1,5 +1,6 @@
 #[derive(Debug, PartialEq)]
 pub enum TournamentError {
+    NotImplemented,
     NoParticipants,
     NonExistentParticipant,
     RaceIsFull,
@@ -16,4 +17,5 @@ pub enum TournamentError {
     InvalidBracketSetSize,
     InvalidGroupConfigurations,
     InvalidBracketId,
+    BracketNotReady,
 }

@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use crate::Placement;
 use crate::bracket::Bracket;
 use crate::config::Config;
 use crate::error::TournamentError;
@@ -8,6 +7,7 @@ use crate::participant::{Participant, ParticipantId, ParticipantMap, Participant
 use crate::pool::Pool;
 use crate::race::{Race, RaceId};
 use crate::view::{RegistrationView, TournamentView, Viewable};
+use crate::{BracketSetId, Placement};
 
 #[derive(Debug, Default)]
 enum TournamentPhase {
@@ -38,6 +38,13 @@ impl Tournament {
     fn pools_mut(&mut self) -> Result<&mut Pool, TournamentError> {
         match &mut self.phase {
             TournamentPhase::Pools(pool) => Ok(pool),
+            _ => Err(TournamentError::WrongPhase),
+        }
+    }
+
+    fn bracket_mut(&mut self) -> Result<&mut Bracket, TournamentError> {
+        match &mut self.phase {
+            TournamentPhase::Bracket(bracket) => Ok(bracket),
             _ => Err(TournamentError::WrongPhase),
         }
     }
@@ -160,6 +167,23 @@ impl Tournament {
         }
 
         Ok(race.is_complete())
+    }
+
+    // Brackets Functions.
+    pub fn advance_bracket(&mut self) -> Result<bool, TournamentError> {
+        self.bracket_mut()?.advance()
+    }
+
+    pub fn update_bracket_set(
+        &mut self,
+        id: BracketSetId,
+        race_index: usize,
+        results: Vec<(ParticipantId, Option<Placement>)>,
+    ) -> Result<bool, TournamentError> {
+        let set = self.bracket_mut()?.set(id)?;
+        let race = set.race(race_index).ok_or(TournamentError::RaceNotFound)?;
+        Self::update_race(race, results)?;
+        Ok(set.is_completed())
     }
 }
 

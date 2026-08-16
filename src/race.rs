@@ -74,6 +74,11 @@ impl Race {
         }
     }
 
+    pub fn clear_racers(&mut self) -> Result<(), TournamentError> {
+        self.racers = vec![];
+        Ok(())
+    }
+
     pub fn set_placement(
         &mut self,
         racer: ParticipantId,

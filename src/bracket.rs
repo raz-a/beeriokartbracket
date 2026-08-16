@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use slotmap::{SlotMap, new_key_type};
 
@@ -19,7 +19,7 @@ pub(crate) struct BracketSet {
 }
 
 impl BracketSet {
-    pub fn new(num_races: usize, racer_count: usize) -> Result<Self, TournamentError> {
+    fn new(num_races: usize, racer_count: usize) -> Result<Self, TournamentError> {
         if !(4..=MAX_RACERS).contains(&racer_count) {
             return Err(TournamentError::InvalidBracketSetSize);
         }
@@ -46,9 +46,7 @@ impl BracketSet {
     }
 
     fn racer_count(&self) -> usize {
-        self.races
-            .first()
-            .map_or(0, |race| race.get_racers().count())
+        self.races[0].get_racers().count()
     }
 
     fn expected_size(&self) -> usize {
@@ -59,15 +57,15 @@ impl BracketSet {
         self.races.iter().any(|race| race.is_complete())
     }
 
-    pub fn is_completed(&self) -> bool {
-        self.races.iter().all(|race| race.is_complete())
+    pub(crate) fn is_completed(&self) -> bool {
+        self.is_ready() && self.races.iter().all(|race| race.is_complete())
     }
 
-    pub fn is_ready(&self) -> bool {
+    fn is_ready(&self) -> bool {
         self.expected_size() == self.racer_count()
     }
 
-    pub fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
+    fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
         if self.is_started() {
             Err(TournamentError::BracketSetAlreadyStarted)
         } else if self.racer_count() + racers.len() > self.expected_size {
@@ -81,18 +79,37 @@ impl BracketSet {
         }
     }
 
-    pub fn current_race_index(&self) -> usize {
+    fn clear_racers(&mut self) -> Result<(), TournamentError> {
+        for race in self.races.iter_mut() {
+            race.clear_racers()?
+        }
+
+        Ok(())
+    }
+
+    fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
+        let mut set: HashSet<_> = self.races[0].get_racers().collect();
+        for id in racers {
+            if !set.remove(id) {
+                return false;
+            }
+        }
+
+        set.is_empty()
+    }
+
+    fn current_race_index(&self) -> usize {
         self.races
             .iter()
             .take_while(|race| race.is_complete())
             .count()
     }
 
-    pub fn race(&mut self, index: usize) -> Option<&mut Race> {
+    pub(crate) fn race(&mut self, index: usize) -> Option<&mut Race> {
         self.races.get_mut(index)
     }
 
-    pub fn get_scores(&self) -> Vec<(ParticipantId, usize)> {
+    fn get_scores(&self) -> Vec<(ParticipantId, usize)> {
         let mut map = HashMap::new();
 
         for race in self.races.iter() {
@@ -104,6 +121,29 @@ impl BracketSet {
         }
 
         map.into_iter().collect()
+    }
+
+    fn get_winners_losers(&self, winner_count: usize) -> (Vec<ParticipantId>, Vec<ParticipantId>) {
+        if !self.is_completed() {
+            return (vec![], vec![]);
+        }
+
+        let mut scores = self.get_scores();
+        scores.sort_by(|(_, score_a), (_, score_b)| score_b.cmp(score_a));
+
+        // TODO: if scores tie across the winner/loser boundary, run a Vanilla
+        // tiebreaker race instead of splitting the tie arbitrarily.
+        let mut scores = scores.into_iter();
+
+        let winners = scores
+            .by_ref()
+            .take(winner_count)
+            .map(|(id, _)| id)
+            .collect();
+
+        let losers = scores.map(|(id, _)| id).collect();
+
+        (winners, losers)
     }
 }
 
@@ -128,7 +168,7 @@ const MIN_LOSERS_BRACKET_RACE_SIZE: usize = 4;
 const ADVANCERS_PER_SET: usize = 4;
 
 #[derive(Debug)]
-pub struct Bracket {
+pub(crate) struct Bracket {
     winners: Vec<BracketRound>,
     losers: Vec<BracketRound>,
     races_per_set: usize,
@@ -136,7 +176,10 @@ pub struct Bracket {
 }
 
 impl Bracket {
-    pub fn new(races_per_set: usize, racers: &[ParticipantId]) -> Result<Self, TournamentError> {
+    pub(crate) fn new(
+        races_per_set: usize,
+        racers: &[ParticipantId],
+    ) -> Result<Self, TournamentError> {
         let mut bracket_sets = SlotMap::with_key();
         let winners = Self::build_winners(races_per_set, racers, &mut bracket_sets)?;
         let losers = Self::build_losers(&winners, races_per_set, &mut bracket_sets)?;
@@ -149,7 +192,7 @@ impl Bracket {
         })
     }
 
-    pub fn set(&mut self, id: BracketSetId) -> Result<&mut BracketSet, TournamentError> {
+    pub(crate) fn set(&mut self, id: BracketSetId) -> Result<&mut BracketSet, TournamentError> {
         let set = self
             .bracket_sets
             .get_mut(id)
@@ -162,7 +205,7 @@ impl Bracket {
         Ok(set)
     }
 
-    pub fn active_set(&self) -> Option<BracketSetId> {
+    fn active_set(&self) -> Option<BracketSetId> {
         for (id, set) in self.bracket_sets.iter() {
             if set.is_ready() && !set.is_completed() {
                 return Some(id);
@@ -172,8 +215,39 @@ impl Bracket {
         None
     }
 
-    pub fn advance(&mut self) -> Result<bool, TournamentError> {
+    pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {
+        // Winners bracket, round by round: reseat each heat whose feeders changed.
+        for r in 0..self.winners.len() {
+            for s in 0..self.winners[r].sets.len() {
+                let Some(advancers) = self.winners_advancers(r, s) else {
+                    continue;
+                };
+
+                let set_id = self.winners[r].sets[s];
+                let set = &mut self.bracket_sets[set_id];
+                set.clear_racers()?;
+                set.add_racers(&advancers)?;
+            }
+        }
+
+        // TODO: advance the losers bracket, then return whether the bracket is complete.
         Err(TournamentError::NotImplemented)
+    }
+
+    /// Advancers that winners heat `(r, s)` should hold, or `None` to leave it as-is —
+    /// round 0 and bye heats have no feeders, and a heat already holding them needs no change.
+    fn winners_advancers(&self, r: usize, s: usize) -> Option<Vec<ParticipantId>> {
+        let prev = self.winners.get(r.checked_sub(1)?)?;
+        let left = &self.bracket_sets[*prev.sets.get(2 * s)?];
+        let right = &self.bracket_sets[*prev.sets.get(2 * s + 1)?];
+
+        let (left_winners, _) = left.get_winners_losers(ADVANCERS_PER_SET);
+        let (right_winners, _) = right.get_winners_losers(ADVANCERS_PER_SET);
+        let advancers = [left_winners, right_winners].concat();
+
+        // Already seeded with exactly these racers ⇒ nothing to do.
+        let set = &self.bracket_sets[self.winners[r].sets[s]];
+        (!set.contains_racers(&advancers)).then_some(advancers)
     }
 
     /// Builds the winners bracket, seeding round-one heats with `racers` and pre-building the

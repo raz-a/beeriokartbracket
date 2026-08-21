@@ -404,8 +404,6 @@ impl Bracket {
 
         for (wb_round, round_sets) in winners.iter().enumerate() {
             // This winners round's droppers join the carried survivors as fresh feeders.
-            // TODO: winners round-0 heats of 6/7 drop 2/3-racer groups; packing can leave a
-            // sub-4 heat for those fields. v1's 16-racer field only ever drops 4s.
             let mut inputs = carried;
             inputs.extend(round_sets.sets.iter().map(|&id| Feeder {
                 id,
@@ -446,6 +444,8 @@ impl Bracket {
         races_per_set: usize,
         bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
     ) -> Result<Vec<BracketSetId>, TournamentError> {
+        // TODO: an odd count of 4-groups leaves a degenerate 4-heat (eliminates no one), and
+        // 6/7-player winners heats drop 2/3-groups that can pack below 4; both want byes.
         let mut heats: Vec<(usize, Vec<Feeder>)> = Vec::new();
         let mut current: Vec<Feeder> = Vec::new();
         let mut current_size = 0;

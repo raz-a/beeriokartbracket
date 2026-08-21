@@ -13,13 +13,30 @@ use crate::{
 new_key_type! { pub struct BracketSetId; }
 
 #[derive(Debug)]
+pub(crate) enum FeederSource {
+    Winners,
+    Losers,
+}
+
+#[derive(Debug)]
+pub(crate) struct Feeder {
+    id: BracketSetId,
+    source: FeederSource,
+}
+
+#[derive(Debug)]
 pub(crate) struct BracketSet {
     races: Vec<Race>,
     expected_size: usize,
+    feeders: Vec<Feeder>,
 }
 
 impl BracketSet {
-    fn new(num_races: usize, racer_count: usize) -> Result<Self, TournamentError> {
+    fn new(
+        num_races: usize,
+        racer_count: usize,
+        feeders: Vec<Feeder>,
+    ) -> Result<Self, TournamentError> {
         if !(4..=MAX_RACERS).contains(&racer_count) {
             return Err(TournamentError::InvalidBracketSetSize);
         }
@@ -42,6 +59,7 @@ impl BracketSet {
         Ok(Self {
             races,
             expected_size: racer_count,
+            feeders,
         })
     }
 
@@ -217,13 +235,13 @@ impl Bracket {
 
     pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {
         // Winners bracket, round by round: reseat each heat whose feeders changed.
-        for r in 0..self.winners.len() {
-            for s in 0..self.winners[r].sets.len() {
-                let Some(advancers) = self.winners_advancers(r, s) else {
+        for round_idx in 0..self.winners.len() {
+            for set_idx in 0..self.winners[round_idx].sets.len() {
+                let Some(advancers) = self.updated_winners_set(round_idx, set_idx) else {
                     continue;
                 };
 
-                let set_id = self.winners[r].sets[s];
+                let set_id = self.winners[round_idx].sets[set_idx];
                 let set = &mut self.bracket_sets[set_id];
                 set.clear_racers()?;
                 set.add_racers(&advancers)?;
@@ -231,22 +249,32 @@ impl Bracket {
         }
 
         // TODO: advance the losers bracket, then return whether the bracket is complete.
+        for round_idx in 0..self.losers.len() {
+            let Some(round_pool) = self.updated_losers_round(round_idx) else {
+                break;
+            };
+
+            // Update losers sets
+        }
+
         Err(TournamentError::NotImplemented)
     }
 
-    /// Advancers that winners heat `(r, s)` should hold, or `None` to leave it as-is —
-    /// round 0 and bye heats have no feeders, and a heat already holding them needs no change.
-    fn winners_advancers(&self, r: usize, s: usize) -> Option<Vec<ParticipantId>> {
-        let prev = self.winners.get(r.checked_sub(1)?)?;
-        let left = &self.bracket_sets[*prev.sets.get(2 * s)?];
-        let right = &self.bracket_sets[*prev.sets.get(2 * s + 1)?];
+    fn updated_losers_round(&self, round_idx: usize) -> Option<Vec<ParticipantId>> {
+        todo!();
+    }
+
+    fn updated_winners_set(&self, round_idx: usize, set_idx: usize) -> Option<Vec<ParticipantId>> {
+        let prev = self.winners.get(round_idx.checked_sub(1)?)?;
+        let left = &self.bracket_sets[*prev.sets.get(2 * set_idx)?];
+        let right = &self.bracket_sets[*prev.sets.get(2 * set_idx + 1)?];
 
         let (left_winners, _) = left.get_winners_losers(ADVANCERS_PER_SET);
         let (right_winners, _) = right.get_winners_losers(ADVANCERS_PER_SET);
         let advancers = [left_winners, right_winners].concat();
 
         // Already seeded with exactly these racers ⇒ nothing to do.
-        let set = &self.bracket_sets[self.winners[r].sets[s]];
+        let set = &self.bracket_sets[self.winners[round_idx].sets[set_idx]];
         (!set.contains_racers(&advancers)).then_some(advancers)
     }
 
@@ -290,16 +318,29 @@ impl Bracket {
                 .pop_group()
                 .ok_or(TournamentError::InvalidGroupConfigurations)?;
 
-            let mut bracket = BracketSet::new(races_per_set, group_size)?;
+            let mut bracket = BracketSet::new(races_per_set, group_size, vec![])?;
             bracket.add_racers(&racers[racer_idx..racer_idx + group_size])?;
             winners[0].sets.push(bracket_sets.insert(bracket));
 
             racer_idx += group_size;
 
-            if i.is_multiple_of(2) && winners.len() > 1 {
-                winners[1]
-                    .sets
-                    .push(bracket_sets.insert(BracketSet::new(races_per_set, MAX_RACERS)?));
+            if !i.is_multiple_of(2) {
+                let feeders = vec![
+                    Feeder {
+                        id: winners[0].sets[i],
+                        source: FeederSource::Winners,
+                    },
+                    Feeder {
+                        id: winners[0].sets[i - 1],
+                        source: FeederSource::Winners,
+                    },
+                ];
+
+                winners[1].sets.push(bracket_sets.insert(BracketSet::new(
+                    races_per_set,
+                    MAX_RACERS,
+                    feeders,
+                )?));
             }
         }
 
@@ -309,7 +350,7 @@ impl Bracket {
                 .pop_group()
                 .ok_or(TournamentError::InvalidGroupConfigurations)?;
 
-            let mut bracket = BracketSet::new(races_per_set, group_size)?;
+            let mut bracket = BracketSet::new(races_per_set, group_size, vec![])?;
             bracket.add_racers(&racers[racer_idx..racer_idx + group_size])?;
             winners[1].sets.push(bracket_sets.insert(bracket));
 
@@ -322,10 +363,25 @@ impl Bracket {
 
         for round in 2..num_rounds {
             let set_count = winners[round - 1].sets.len() / 2;
-            for _ in 0..set_count {
+            for i in 0..set_count {
+                let feeders = vec![
+                    Feeder {
+                        id: winners[round - 1].sets[2 * i],
+                        source: FeederSource::Winners,
+                    },
+                    Feeder {
+                        id: winners[round - 1].sets[2 * i + 1],
+                        source: FeederSource::Winners,
+                    },
+                ];
+
                 winners[round]
                     .sets
-                    .push(bracket_sets.insert(BracketSet::new(races_per_set, MAX_RACERS)?));
+                    .push(bracket_sets.insert(BracketSet::new(
+                        races_per_set,
+                        MAX_RACERS,
+                        feeders,
+                    )?));
             }
         }
 
@@ -333,34 +389,40 @@ impl Bracket {
     }
 
     /// Builds the losers bracket, pre-built empty: one intake round per winners round
-    /// (its droppers + prior survivors), plus consolidation rounds to shrink
-    /// down to a single heat of finalists. All sizes are a function of the field.
+    /// (its droppers + prior survivors), plus consolidation rounds to shrink down to a
+    /// single heat of finalists. Every heat is fed by whole 4-groups, so a heat's roster is
+    /// a function of its feeders, never of an ordering.
     fn build_losers(
         winners: &[BracketRound],
         races_per_set: usize,
         bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
     ) -> Result<Vec<BracketRound>, TournamentError> {
         let mut losers = Vec::new();
-        let mut carried: usize = 0;
+
+        // Survivor groups carried from the previous losers round; each is 4 racers.
+        let mut carried: Vec<Feeder> = Vec::new();
 
         for (wb_round, round_sets) in winners.iter().enumerate() {
-            let droppers: usize = round_sets
-                .sets
-                .iter()
-                .map(|&id| bracket_sets[id].expected_size() - ADVANCERS_PER_SET)
-                .sum();
+            // This winners round's droppers join the carried survivors as fresh feeders.
+            // TODO: winners round-0 heats of 6/7 drop 2/3-racer groups; packing can leave a
+            // sub-4 heat for those fields. v1's 16-racer field only ever drops 4s.
+            let mut inputs = carried;
+            inputs.extend(round_sets.sets.iter().map(|&id| Feeder {
+                id,
+                source: FeederSource::Losers,
+            }));
 
-            let sets = Self::split_losers_sets(carried + droppers, races_per_set, bracket_sets)?;
-
-            carried = ADVANCERS_PER_SET * sets.len();
+            let sets = Self::pack_losers_sets(inputs, races_per_set, bracket_sets)?;
+            carried = Self::survivor_feeders(&sets);
             losers.push(BracketRound {
                 sets,
                 kind: BracketRoundKind::LosersIntake { wb_round },
             });
 
-            while carried > ADVANCERS_PER_SET {
-                let sets = Self::split_losers_sets(carried, races_per_set, bracket_sets)?;
-                carried = ADVANCERS_PER_SET * sets.len();
+            // Consolidate survivors until a single heat's worth remains.
+            while carried.len() > 1 {
+                let sets = Self::pack_losers_sets(carried, races_per_set, bracket_sets)?;
+                carried = Self::survivor_feeders(&sets);
                 losers.push(BracketRound {
                     sets,
                     kind: BracketRoundKind::LosersConsolidate,
@@ -369,25 +431,72 @@ impl Bracket {
         }
 
         debug_assert_eq!(
-            carried, ADVANCERS_PER_SET,
+            carried.len(),
+            1,
             "losers bracket must reduce to exactly one heat of finalists"
         );
 
         Ok(losers)
     }
 
-    /// Splits `pool` racers into empty losers-bracket sets of `4..=8`, fewest heats.
-    fn split_losers_sets(
-        pool: usize,
+    /// Packs whole feeder groups into empty losers heats of `4..=8`, filling toward 8 and
+    /// keeping each source group intact.
+    fn pack_losers_sets(
+        groups: Vec<Feeder>,
         races_per_set: usize,
         bracket_sets: &mut SlotMap<BracketSetId, BracketSet>,
     ) -> Result<Vec<BracketSetId>, TournamentError> {
-        let mut tracker = RaceGroupTracker::new(pool, MIN_LOSERS_BRACKET_RACE_SIZE)?;
-        let mut sets = Vec::with_capacity(tracker.get_group_count());
-        while let Some(size) = tracker.pop_group() {
-            sets.push(bracket_sets.insert(BracketSet::new(races_per_set, size)?));
+        let mut heats: Vec<(usize, Vec<Feeder>)> = Vec::new();
+        let mut current: Vec<Feeder> = Vec::new();
+        let mut current_size = 0;
+
+        for group in groups {
+            let size = Self::feeder_group_size(&group, bracket_sets);
+            if !current.is_empty() && current_size + size > MAX_RACERS {
+                heats.push((current_size, std::mem::take(&mut current)));
+                current_size = 0;
+            }
+
+            current.push(group);
+            current_size += size;
         }
+
+        if !current.is_empty() {
+            heats.push((current_size, current));
+        }
+
+        let mut sets = Vec::with_capacity(heats.len());
+        for (size, feeders) in heats {
+            debug_assert!(
+                (MIN_LOSERS_BRACKET_RACE_SIZE..=MAX_RACERS).contains(&size),
+                "losers heat size {size} out of range"
+            );
+            sets.push(bracket_sets.insert(BracketSet::new(races_per_set, size, feeders)?));
+        }
+
         Ok(sets)
+    }
+
+    /// The survivors (top `ADVANCERS_PER_SET`) of each heat, as feeders for the next round.
+    fn survivor_feeders(sets: &[BracketSetId]) -> Vec<Feeder> {
+        sets.iter()
+            .map(|&id| Feeder {
+                id,
+                source: FeederSource::Winners,
+            })
+            .collect()
+    }
+
+    /// Racers a feeder contributes: a heat's survivors are always `ADVANCERS_PER_SET`; its
+    /// droppers are everyone else.
+    fn feeder_group_size(
+        feeder: &Feeder,
+        bracket_sets: &SlotMap<BracketSetId, BracketSet>,
+    ) -> usize {
+        match feeder.source {
+            FeederSource::Winners => ADVANCERS_PER_SET,
+            FeederSource::Losers => bracket_sets[feeder.id].expected_size() - ADVANCERS_PER_SET,
+        }
     }
 }
 

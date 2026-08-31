@@ -503,10 +503,9 @@ impl Bracket {
 
         let mut sets = Vec::with_capacity(heats.len());
         for (size, feeders) in heats {
-            debug_assert!(
-                (MIN_LOSERS_BRACKET_RACE_SIZE..=MAX_RACERS).contains(&size),
-                "losers heat size {size} out of range"
-            );
+            if !(MIN_LOSERS_BRACKET_RACE_SIZE..=MAX_RACERS).contains(&size) {
+                return Err(TournamentError::InvalidBracketSetSize);
+            }
             sets.push(bracket_sets.insert(BracketSet::new(races_per_set, size, feeders)?));
         }
 
@@ -802,5 +801,13 @@ mod tests {
             let bracket = Bracket::new(3, &make_participants(n)).unwrap();
             assert_eq!(lb_finalists(&bracket), 4, "n = {n}");
         }
+    }
+
+    #[test]
+    fn invalid_losers_heat_size_returns_an_error() {
+        assert_eq!(
+            Bracket::new(3, &make_participants(25)).unwrap_err(),
+            TournamentError::InvalidBracketSetSize
+        );
     }
 }

@@ -14,7 +14,7 @@ pub use bracket::{
 };
 pub use config::Config;
 pub use error::TournamentError;
-pub use gauntlet::GauntletView;
+pub use gauntlet::{GauntletRacerView, GauntletView};
 pub use participant::{ParticipantId, ParticipantView};
 pub use pool::{PoolResultView, PoolView};
 pub use race::{Placement, RaceId, RaceRuleset, RaceView};

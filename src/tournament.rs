@@ -281,11 +281,17 @@ mod tests {
             panic!("completed bracket should advance to the gauntlet");
         };
         assert_eq!(gauntlet.racers.len(), 8);
+        assert!(
+            gauntlet
+                .racers
+                .windows(2)
+                .all(|racers| racers[0].lives >= racers[1].lives)
+        );
         assert_eq!(
             gauntlet
                 .racers
                 .iter()
-                .filter(|(_, lives)| *lives == 6)
+                .filter(|racer| racer.lives == 6)
                 .count(),
             4
         );
@@ -293,7 +299,7 @@ mod tests {
             gauntlet
                 .racers
                 .iter()
-                .filter(|(_, lives)| *lives == 3)
+                .filter(|racer| racer.lives == 3)
                 .count(),
             4
         );

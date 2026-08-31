@@ -167,12 +167,14 @@ impl eframe::App for TournamentApp {
                 });
         }
 
-        if let TournamentView::Bracket(bracket) = &view {
+        if let TournamentView::Bracket(bracket) = &view
+            && bracket.active_set.is_some()
+        {
             egui::SidePanel::right("current_bracket_heat")
                 .resizable(false)
                 .exact_width(320.0)
                 .frame(solid_panel_frame())
-                .show(ctx, |ui| current_bracket_heat_ui(ui, bracket, &mut action));
+                .show(ctx, |ui| current_bracket_heat_ui(ui, bracket));
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -960,6 +962,11 @@ impl TournamentApp {
         );
         ui.add_space(10.0);
 
+        if !bracket.winners_finalists.is_empty() && !bracket.losers_finalists.is_empty() {
+            bracket_advancers_ui(ui, &bracket, action);
+            ui.add_space(20.0);
+        }
+
         let active = bracket.active_set;
         let set_labels: HashMap<BracketSetId, String> = bracket
             .winners
@@ -1405,43 +1412,12 @@ fn active_bracket_set(bracket: &BracketView) -> Option<(String, &BracketSetView)
     None
 }
 
-fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView, action: &mut Option<Action>) {
+fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView) {
     banner(ui, "Current Heat", 22.0);
     ui.add_space(10.0);
 
     let Some((label, set)) = active_bracket_set(bracket) else {
-        if bracket.winners_finalists.is_empty() || bracket.losers_finalists.is_empty() {
-            ui.label(egui::RichText::new("Waiting for the next heat").weak());
-            return;
-        }
-
-        ui.label(
-            egui::RichText::new("Bracket complete")
-                .color(ACTIVE_GREEN_BRIGHT)
-                .strong()
-                .size(18.0),
-        );
-        ui.add_space(12.0);
-        finalist_group_ui(ui, "Winners finalists", &bracket.winners_finalists);
-        ui.add_space(10.0);
-        finalist_group_ui(ui, "Losers finalists", &bracket.losers_finalists);
-        ui.add_space(18.0);
-
-        if ui
-            .add_sized(
-                [ui.available_width(), 42.0],
-                egui::Button::new(
-                    egui::RichText::new("Advance to Gauntlet")
-                        .color(egui::Color32::BLACK)
-                        .strong()
-                        .size(17.0),
-                )
-                .fill(ACTIVE_GREEN_BRIGHT),
-            )
-            .clicked()
-        {
-            *action = Some(Action::Next);
-        }
+        ui.label(egui::RichText::new("Waiting for the next heat").weak());
         return;
     };
 
@@ -1494,6 +1470,53 @@ fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView, action: &mu
         });
 }
 
+fn bracket_advancers_ui(ui: &mut egui::Ui, bracket: &BracketView, action: &mut Option<Action>) {
+    egui::Frame::none()
+        .fill(ACTIVE_CARD_BG)
+        .stroke(egui::Stroke::new(2.0_f32, ACTIVE_GREEN_BRIGHT))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(16.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("Advancing to the Grand Finals Gauntlet")
+                    .color(ACTIVE_GREEN_BRIGHT)
+                    .font(title_font(22.0)),
+            );
+            ui.add_space(12.0);
+
+            ui.columns(2, |columns| {
+                finalist_group_ui(
+                    &mut columns[0],
+                    "Winners finalists · 6 lives",
+                    &bracket.winners_finalists,
+                );
+                finalist_group_ui(
+                    &mut columns[1],
+                    "Losers finalists · 3 lives",
+                    &bracket.losers_finalists,
+                );
+            });
+
+            ui.add_space(16.0);
+            if ui
+                .add_sized(
+                    [ui.available_width(), 44.0],
+                    egui::Button::new(
+                        egui::RichText::new("Advance to Gauntlet")
+                            .color(egui::Color32::BLACK)
+                            .strong()
+                            .size(18.0),
+                    )
+                    .fill(ACTIVE_GREEN_BRIGHT),
+                )
+                .clicked()
+            {
+                *action = Some(Action::Next);
+            }
+        });
+}
+
 fn finalist_group_ui(ui: &mut egui::Ui, heading: &str, racers: &[ParticipantView]) {
     ui.label(
         egui::RichText::new(heading)
@@ -1528,14 +1551,14 @@ fn gauntlet_ui(ui: &mut egui::Ui, gauntlet: GauntletView) {
             ui.strong("Lives");
             ui.end_row();
 
-            for (index, (racer, lives)) in gauntlet.racers.iter().enumerate() {
+            for (index, racer) in gauntlet.racers.iter().enumerate() {
                 ui.label(
-                    egui::RichText::new(&racer.name)
+                    egui::RichText::new(&racer.participant.name)
                         .color(player_color(index))
                         .font(mario_font(18.0)),
                 );
                 ui.label(
-                    egui::RichText::new(lives.to_string())
+                    egui::RichText::new(racer.lives.to_string())
                         .color(AMBER)
                         .strong()
                         .size(18.0),

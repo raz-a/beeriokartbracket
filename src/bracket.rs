@@ -97,12 +97,10 @@ impl BracketSet {
         }
     }
 
-    fn clear_racers(&mut self) -> Result<(), TournamentError> {
+    fn clear_racers(&mut self) {
         for race in self.races.iter_mut() {
-            race.clear_racers()?
+            race.clear_racers()
         }
-
-        Ok(())
     }
 
     fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
@@ -189,7 +187,6 @@ const ADVANCERS_PER_SET: usize = 4;
 pub(crate) struct Bracket {
     winners: Vec<BracketRound>,
     losers: Vec<BracketRound>,
-    races_per_set: usize,
     bracket_sets: SlotMap<BracketSetId, BracketSet>,
 }
 
@@ -205,7 +202,6 @@ impl Bracket {
         Ok(Self {
             winners,
             losers,
-            races_per_set,
             bracket_sets,
         })
     }
@@ -237,45 +233,55 @@ impl Bracket {
         // Winners bracket, round by round: reseat each heat whose feeders changed.
         for round_idx in 0..self.winners.len() {
             for set_idx in 0..self.winners[round_idx].sets.len() {
-                let Some(advancers) = self.updated_winners_set(round_idx, set_idx) else {
-                    continue;
-                };
-
-                let set_id = self.winners[round_idx].sets[set_idx];
-                let set = &mut self.bracket_sets[set_id];
-                set.clear_racers()?;
-                set.add_racers(&advancers)?;
+                let id = self.winners[round_idx].sets[set_idx];
+                self.update_set(id)?;
             }
         }
 
-        // TODO: advance the losers bracket, then return whether the bracket is complete.
+        // Losers bracket, round by round: reseat each heat whose feeders changed.
         for round_idx in 0..self.losers.len() {
-            let Some(round_pool) = self.updated_losers_round(round_idx) else {
-                break;
-            };
-
-            // Update losers sets
+            for set_idx in 0..self.losers[round_idx].sets.len() {
+                let id = self.losers[round_idx].sets[set_idx];
+                self.update_set(id)?;
+            }
         }
 
-        Err(TournamentError::NotImplemented)
+        // Check if the final winners and losers rounds are completed
+        let &w_id = self.winners.last().unwrap().sets.first().unwrap();
+        let &l_id = self.losers.last().unwrap().sets.first().unwrap();
+
+        Ok(self.bracket_sets[w_id].is_completed() && self.bracket_sets[l_id].is_completed())
     }
 
-    fn updated_losers_round(&self, round_idx: usize) -> Option<Vec<ParticipantId>> {
-        todo!();
-    }
+    fn update_set(&mut self, set_id: BracketSetId) -> Result<(), TournamentError> {
+        let set = &self.bracket_sets[set_id];
 
-    fn updated_winners_set(&self, round_idx: usize, set_idx: usize) -> Option<Vec<ParticipantId>> {
-        let prev = self.winners.get(round_idx.checked_sub(1)?)?;
-        let left = &self.bracket_sets[*prev.sets.get(2 * set_idx)?];
-        let right = &self.bracket_sets[*prev.sets.get(2 * set_idx + 1)?];
+        // If there are no feeders, then this is a starting set. No need to update anything here.
+        if set.feeders.is_empty() {
+            return Ok(());
+        }
 
-        let (left_winners, _) = left.get_winners_losers(ADVANCERS_PER_SET);
-        let (right_winners, _) = right.get_winners_losers(ADVANCERS_PER_SET);
-        let advancers = [left_winners, right_winners].concat();
+        let mut participants = vec![];
+        // Incomplete feeders contribute no racers, intentionally cascading an upstream reset
+        // through every dependent heat.
+        for feeder in set.feeders.iter() {
+            let feeder_set = &self.bracket_sets[feeder.id];
 
-        // Already seeded with exactly these racers ⇒ nothing to do.
-        let set = &self.bracket_sets[self.winners[round_idx].sets[set_idx]];
-        (!set.contains_racers(&advancers)).then_some(advancers)
+            let (mut winners, mut losers) = feeder_set.get_winners_losers(ADVANCERS_PER_SET);
+            match feeder.source {
+                FeederSource::Winners => participants.append(&mut winners),
+                FeederSource::Losers => participants.append(&mut losers),
+            }
+        }
+
+        let set = &mut self.bracket_sets[set_id];
+        if !set.contains_racers(&participants) {
+            // An upstream correction changes this heat's roster, invalidating all existing results.
+            set.clear_racers();
+            set.add_racers(&participants)?;
+        }
+
+        Ok(())
     }
 
     /// Builds the winners bracket, seeding round-one heats with `racers` and pre-building the
@@ -568,6 +574,7 @@ impl Viewable<BracketView> for Bracket {
 mod tests {
     use super::*;
 
+    use crate::Placement;
     use slotmap::SlotMap;
 
     fn make_participants(n: usize) -> Vec<ParticipantId> {
@@ -583,6 +590,93 @@ mod tests {
 
     fn lb_finalists(bracket: &Bracket) -> usize {
         ADVANCERS_PER_SET * bracket.losers.last().unwrap().sets.len()
+    }
+
+    fn complete_set(set: &mut BracketSet) {
+        let racers: Vec<_> = set.races[0].get_racers().collect();
+        for race in &mut set.races {
+            for (index, &racer) in racers.iter().enumerate() {
+                race.set_placement(racer, Some(Placement::new((index + 1) as u8).unwrap()))
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn advance_routes_opening_heat_results_to_both_brackets() {
+        let racers = make_participants(16);
+        let mut bracket = Bracket::new(3, &racers).unwrap();
+        let first_winners_sets = bracket.winners[0].sets.clone();
+
+        for &set_id in &first_winners_sets {
+            complete_set(&mut bracket.bracket_sets[set_id]);
+        }
+
+        assert!(!bracket.advance().unwrap());
+
+        let winners_final = &bracket.bracket_sets[bracket.winners[1].sets[0]];
+        let first_losers_set = &bracket.bracket_sets[bracket.losers[0].sets[0]];
+        let expected_winners = [&racers[0..4], &racers[8..12]].concat();
+        let expected_losers = [&racers[4..8], &racers[12..16]].concat();
+
+        assert!(winners_final.contains_racers(&expected_winners));
+        assert!(first_losers_set.contains_racers(&expected_losers));
+    }
+
+    #[test]
+    fn upstream_correction_resets_every_dependent_heat() {
+        let racers = make_participants(16);
+        let mut bracket = Bracket::new(3, &racers).unwrap();
+        let opening_sets = bracket.winners[0].sets.clone();
+
+        for &set_id in &opening_sets {
+            complete_set(&mut bracket.bracket_sets[set_id]);
+        }
+        bracket.advance().unwrap();
+
+        let winners_final_id = bracket.winners[1].sets[0];
+        let first_losers_id = bracket.losers[0].sets[0];
+        complete_set(&mut bracket.bracket_sets[winners_final_id]);
+        complete_set(&mut bracket.bracket_sets[first_losers_id]);
+        bracket.advance().unwrap();
+
+        let last_losers_id = bracket.losers[1].sets[0];
+        complete_set(&mut bracket.bracket_sets[last_losers_id]);
+        assert!(bracket.bracket_sets[last_losers_id].is_completed());
+
+        // Swap an advancing racer with an eliminated racer in an opening heat.
+        let corrected_set = &mut bracket.bracket_sets[opening_sets[0]];
+        for race in &mut corrected_set.races {
+            race.set_placement(racers[0], Some(Placement::new(5).unwrap()))
+                .unwrap();
+            race.set_placement(racers[4], Some(Placement::new(1).unwrap()))
+                .unwrap();
+        }
+
+        assert!(!bracket.advance().unwrap());
+
+        let corrected_winners = [
+            &[racers[4], racers[1], racers[2], racers[3]],
+            &racers[8..12],
+        ]
+        .concat();
+        let corrected_losers = [
+            &[racers[0], racers[5], racers[6], racers[7]],
+            &racers[12..16],
+        ]
+        .concat();
+        assert!(bracket.bracket_sets[winners_final_id].contains_racers(&corrected_winners));
+        assert!(bracket.bracket_sets[first_losers_id].contains_racers(&corrected_losers));
+        assert!(
+            bracket.bracket_sets[winners_final_id]
+                .races
+                .iter()
+                .all(|race| race
+                    .get_racers_and_placements()
+                    .iter()
+                    .all(|(_, placement)| placement.is_none()))
+        );
+        assert_eq!(bracket.bracket_sets[last_losers_id].racer_count(), 0);
     }
 
     #[test]

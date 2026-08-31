@@ -65,7 +65,7 @@ impl Race {
         Ok(())
     }
 
-    pub fn remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
+    pub fn _remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
         if let Some(idx) = self.racers.iter().position(|(r, _)| *r == racer) {
             self.racers.remove(idx);
             Ok(())
@@ -74,9 +74,8 @@ impl Race {
         }
     }
 
-    pub fn clear_racers(&mut self) -> Result<(), TournamentError> {
+    pub fn clear_racers(&mut self) {
         self.racers = vec![];
-        Ok(())
     }
 
     pub fn set_placement(

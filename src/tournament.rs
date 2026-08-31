@@ -15,8 +15,8 @@ enum TournamentPhase {
     Registration,
     Pools(Box<Pool>),
     Bracket(Box<Bracket>),
-    Gauntlet,
-    Complete,
+    _Gauntlet,
+    _Complete,
 }
 
 #[derive(Debug, Default)]
@@ -82,8 +82,8 @@ impl Tournament {
                 Ok(())
             }
             TournamentPhase::Bracket(_) => todo!(),
-            TournamentPhase::Gauntlet => todo!(),
-            TournamentPhase::Complete => todo!(),
+            TournamentPhase::_Gauntlet => todo!(),
+            TournamentPhase::_Complete => todo!(),
         }
     }
 
@@ -208,8 +208,8 @@ impl Viewable<TournamentView> for Tournament {
             TournamentPhase::Bracket(bracket) => {
                 TournamentView::Bracket(bracket.as_ref().view(id_map))
             }
-            TournamentPhase::Gauntlet => TournamentView::Gauntlet,
-            TournamentPhase::Complete => TournamentView::Complete,
+            TournamentPhase::_Gauntlet => TournamentView::Gauntlet,
+            TournamentPhase::_Complete => TournamentView::Complete,
         }
     }
 }

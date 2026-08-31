@@ -18,4 +18,5 @@ pub enum TournamentError {
     InvalidGroupConfigurations,
     InvalidBracketId,
     BracketNotReady,
+    InvalidBracketFormat,
 }

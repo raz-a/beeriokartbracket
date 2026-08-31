@@ -242,6 +242,13 @@ impl Bracket {
             })
     }
 
+    pub(crate) fn is_complete(&self) -> bool {
+        let &w_id = self.winners.last().unwrap().sets.first().unwrap();
+        let &l_id = self.losers.last().unwrap().sets.first().unwrap();
+
+        self.bracket_sets[w_id].is_completed() && self.bracket_sets[l_id].is_completed()
+    }
+
     pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {
         // Winners bracket, round by round: reseat each heat whose feeders changed.
         for round_idx in 0..self.winners.len() {
@@ -259,11 +266,21 @@ impl Bracket {
             }
         }
 
-        // Check if the final winners and losers rounds are completed
-        let &w_id = self.winners.last().unwrap().sets.first().unwrap();
-        let &l_id = self.losers.last().unwrap().sets.first().unwrap();
+        Ok(self.is_complete())
+    }
 
-        Ok(self.bracket_sets[w_id].is_completed() && self.bracket_sets[l_id].is_completed())
+    pub(crate) fn get_results(&self) -> Option<(Vec<ParticipantId>, Vec<ParticipantId>)> {
+        if !self.is_complete() {
+            return None;
+        }
+
+        let winners_finals = &self.bracket_sets[*self.winners.last()?.sets.first()?];
+        let losers_finals = &self.bracket_sets[*self.losers.last()?.sets.first()?];
+
+        let (winners, _) = winners_finals.get_winners_losers(ADVANCERS_PER_SET);
+        let (losers, _) = losers_finals.get_winners_losers(ADVANCERS_PER_SET);
+
+        Some((winners, losers))
     }
 
     fn update_set(&mut self, set_id: BracketSetId) -> Result<(), TournamentError> {
@@ -551,6 +568,8 @@ pub struct BracketView {
     pub winners: Vec<BracketRoundView>,
     pub losers: Vec<BracketRoundView>,
     pub active_set: Option<BracketSetId>,
+    pub winners_finalists: Vec<ParticipantView>,
+    pub losers_finalists: Vec<ParticipantView>,
 }
 
 impl Viewable<BracketSetView> for BracketSet {
@@ -601,10 +620,22 @@ impl Viewable<BracketView> for Bracket {
                 .collect(),
         };
 
+        let (winners_finalists, losers_finalists) = self.get_results().map_or_else(
+            || (Vec::new(), Vec::new()),
+            |(winners, losers)| {
+                (
+                    winners.iter().map(|id| id.view(id_map)).collect(),
+                    losers.iter().map(|id| id.view(id_map)).collect(),
+                )
+            },
+        );
+
         BracketView {
             winners: self.winners.iter().map(&round_view).collect(),
             losers: self.losers.iter().map(&round_view).collect(),
             active_set: self.active_set(),
+            winners_finalists,
+            losers_finalists,
         }
     }
 }

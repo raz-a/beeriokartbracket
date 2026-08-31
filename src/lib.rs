@@ -1,6 +1,7 @@
 mod bracket;
 mod config;
 mod error;
+mod gauntlet;
 mod participant;
 mod pool;
 mod race;
@@ -13,6 +14,7 @@ pub use bracket::{
 };
 pub use config::Config;
 pub use error::TournamentError;
+pub use gauntlet::GauntletView;
 pub use participant::{ParticipantId, ParticipantView};
 pub use pool::{PoolResultView, PoolView};
 pub use race::{Placement, RaceId, RaceRuleset, RaceView};

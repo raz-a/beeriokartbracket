@@ -1,5 +1,6 @@
 use crate::bracket::BracketView;
 use crate::config::Config;
+use crate::gauntlet::GauntletView;
 use crate::participant::{ParticipantMap, ParticipantView};
 use crate::pool::{PoolResultView, PoolView};
 
@@ -18,6 +19,6 @@ pub enum TournamentView {
     Registration(RegistrationView),
     Pools((PoolView, Option<PoolResultView>)),
     Bracket(BracketView),
-    Gauntlet,
+    Gauntlet(GauntletView),
     Complete,
 }

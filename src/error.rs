@@ -19,4 +19,5 @@ pub enum TournamentError {
     InvalidBracketId,
     BracketNotReady,
     InvalidBracketFormat,
+    BracketNotCompleted,
 }

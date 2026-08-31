@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::bracket::Bracket;
 use crate::config::Config;
 use crate::error::TournamentError;
+use crate::gauntlet::Gauntlet;
 use crate::participant::{Participant, ParticipantId, ParticipantMap, ParticipantView};
 use crate::pool::Pool;
 use crate::race::{Race, RaceId};
@@ -15,7 +16,7 @@ enum TournamentPhase {
     Registration,
     Pools(Box<Pool>),
     Bracket(Box<Bracket>),
-    _Gauntlet,
+    Gauntlet(Box<Gauntlet>),
     _Complete,
 }
 
@@ -65,10 +66,6 @@ impl Tournament {
                 Ok(())
             }
             TournamentPhase::Pools(pool) => {
-                if !pool.is_complete() {
-                    return Err(TournamentError::PoolsNotCompleted);
-                }
-
                 let results = pool
                     .get_results(self.config.bracket_size.get())
                     .ok_or(TournamentError::PoolsNotCompleted)?;
@@ -81,8 +78,24 @@ impl Tournament {
 
                 Ok(())
             }
-            TournamentPhase::Bracket(_) => todo!(),
-            TournamentPhase::_Gauntlet => todo!(),
+            TournamentPhase::Bracket(bracket) => {
+                if !bracket.is_complete() {
+                    return Err(TournamentError::BracketNotCompleted);
+                }
+
+                let (winners, losers) = bracket
+                    .get_results()
+                    .ok_or(TournamentError::BracketNotCompleted)?;
+
+                self.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
+                    winners,
+                    losers,
+                    self.config.gauntlet_lives.into(),
+                )));
+
+                Ok(())
+            }
+            TournamentPhase::Gauntlet(_) => todo!(),
             TournamentPhase::_Complete => todo!(),
         }
     }
@@ -208,8 +221,81 @@ impl Viewable<TournamentView> for Tournament {
             TournamentPhase::Bracket(bracket) => {
                 TournamentView::Bracket(bracket.as_ref().view(id_map))
             }
-            TournamentPhase::_Gauntlet => TournamentView::Gauntlet,
+            TournamentPhase::Gauntlet(gauntlet) => {
+                TournamentView::Gauntlet(gauntlet.as_ref().view(id_map))
+            }
             TournamentPhase::_Complete => TournamentView::Complete,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_bracket_advances_finalists_to_gauntlet() {
+        let mut tournament = Tournament::default();
+        let racers: Vec<_> = (1..=16)
+            .map(|number| {
+                tournament
+                    .participants
+                    .insert(Participant::new(&format!("Player {number}")))
+            })
+            .collect();
+        tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
+
+        loop {
+            let TournamentView::Bracket(bracket) = tournament.view() else {
+                panic!("tournament should remain in the bracket phase");
+            };
+            let Some(active_id) = bracket.active_set else {
+                assert_eq!(bracket.winners_finalists.len(), 4);
+                assert_eq!(bracket.losers_finalists.len(), 4);
+                break;
+            };
+            let active_set = bracket
+                .winners
+                .iter()
+                .chain(&bracket.losers)
+                .flat_map(|round| &round.sets)
+                .find(|(id, _)| *id == active_id)
+                .map(|(_, set)| set)
+                .unwrap();
+            let results =
+                active_set.racers.iter().enumerate().map(|(index, racer)| {
+                    (racer.id, Some(Placement::new((index + 1) as u8).unwrap()))
+                });
+
+            for race_index in 0..active_set.races.len() {
+                tournament
+                    .update_bracket_set(active_id, race_index, results.clone().collect())
+                    .unwrap();
+            }
+            tournament.advance_bracket().unwrap();
+        }
+
+        tournament.next_phase().unwrap();
+
+        let TournamentView::Gauntlet(gauntlet) = tournament.view() else {
+            panic!("completed bracket should advance to the gauntlet");
+        };
+        assert_eq!(gauntlet.racers.len(), 8);
+        assert_eq!(
+            gauntlet
+                .racers
+                .iter()
+                .filter(|(_, lives)| *lives == 6)
+                .count(),
+            4
+        );
+        assert_eq!(
+            gauntlet
+                .racers
+                .iter()
+                .filter(|(_, lives)| *lives == 3)
+                .count(),
+            4
+        );
     }
 }

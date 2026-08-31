@@ -3,8 +3,8 @@ use std::num::NonZero;
 
 use beeriokartbracket::{
     BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, FeederSource,
-    ParticipantId, ParticipantView, Placement, PoolResultView, PoolView, RaceId, RaceRuleset,
-    RaceView, RegistrationView, Tournament, TournamentError, TournamentView,
+    GauntletView, ParticipantId, ParticipantView, Placement, PoolResultView, PoolView, RaceId,
+    RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError, TournamentView,
 };
 use eframe::egui;
 use rand::seq::SliceRandom;
@@ -42,6 +42,7 @@ struct TournamentApp {
     pool_rounds: usize,
     bracket_size: usize,
     races_per_round: usize,
+    gauntlet_lives: usize,
     // Place text entry for the active pool race, keyed by racer (empty = unset).
     placement_inputs: HashMap<ParticipantId, String>,
     // Place text entry for correcting a completed race, keyed by (race, racer).
@@ -66,6 +67,7 @@ impl Default for TournamentApp {
             pool_rounds: 8,
             bracket_size: 16,
             races_per_round: 3,
+            gauntlet_lives: 3,
             placement_inputs: HashMap::new(),
             race_edits: HashMap::new(),
             bracket_edits: HashMap::new(),
@@ -170,7 +172,7 @@ impl eframe::App for TournamentApp {
                 .resizable(false)
                 .exact_width(320.0)
                 .frame(solid_panel_frame())
-                .show(ctx, |ui| current_bracket_heat_ui(ui, bracket));
+                .show(ctx, |ui| current_bracket_heat_ui(ui, bracket, &mut action));
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -178,9 +180,7 @@ impl eframe::App for TournamentApp {
                 TournamentView::Registration(reg) => self.registration_ui(ui, reg, &mut action),
                 TournamentView::Pools(pool) => self.pools_ui(ui, pool.0, pool.1, &mut action),
                 TournamentView::Bracket(bracket) => self.bracket_ui(ui, bracket, &mut action),
-                TournamentView::Gauntlet => {
-                    ui.label("Not yet implemented.");
-                }
+                TournamentView::Gauntlet(gauntlet) => gauntlet_ui(ui, gauntlet),
                 TournamentView::Complete => {
                     ui.label("The tournament is complete.");
                 }
@@ -270,6 +270,9 @@ impl TournamentApp {
                 ui.label("Races per heat");
                 ui.add(egui::DragValue::new(&mut self.races_per_round).range(1..=9));
                 ui.end_row();
+                ui.label("Gauntlet lives");
+                ui.add(egui::DragValue::new(&mut self.gauntlet_lives).range(1..=9));
+                ui.end_row();
             });
 
         ui.add_space(18.0);
@@ -312,6 +315,7 @@ impl TournamentApp {
             pool_rounds: NonZero::new(self.pool_rounds)?,
             bracket_size: NonZero::new(self.bracket_size)?,
             bracket_races_per_round: NonZero::new(self.races_per_round)?,
+            gauntlet_lives: NonZero::new(self.gauntlet_lives)?,
             seed,
         })
     }
@@ -864,6 +868,8 @@ impl TournamentApp {
             bracket_size: NonZero::new(player_count).expect("bracket size is at least one"),
             bracket_races_per_round: NonZero::new(self.races_per_round)
                 .expect("races per heat are at least one"),
+            gauntlet_lives: NonZero::new(self.gauntlet_lives)
+                .expect("gauntlet lives are at least one"),
             seed: rand::random(),
         })?;
         self.tournament.next_phase()?;
@@ -1399,17 +1405,43 @@ fn active_bracket_set(bracket: &BracketView) -> Option<(String, &BracketSetView)
     None
 }
 
-fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView) {
+fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView, action: &mut Option<Action>) {
     banner(ui, "Current Heat", 22.0);
     ui.add_space(10.0);
 
     let Some((label, set)) = active_bracket_set(bracket) else {
+        if bracket.winners_finalists.is_empty() || bracket.losers_finalists.is_empty() {
+            ui.label(egui::RichText::new("Waiting for the next heat").weak());
+            return;
+        }
+
         ui.label(
             egui::RichText::new("Bracket complete")
                 .color(ACTIVE_GREEN_BRIGHT)
                 .strong()
                 .size(18.0),
         );
+        ui.add_space(12.0);
+        finalist_group_ui(ui, "Winners finalists", &bracket.winners_finalists);
+        ui.add_space(10.0);
+        finalist_group_ui(ui, "Losers finalists", &bracket.losers_finalists);
+        ui.add_space(18.0);
+
+        if ui
+            .add_sized(
+                [ui.available_width(), 42.0],
+                egui::Button::new(
+                    egui::RichText::new("Advance to Gauntlet")
+                        .color(egui::Color32::BLACK)
+                        .strong()
+                        .size(17.0),
+                )
+                .fill(ACTIVE_GREEN_BRIGHT),
+            )
+            .clicked()
+        {
+            *action = Some(Action::Next);
+        }
         return;
     };
 
@@ -1458,6 +1490,57 @@ fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView) {
                             .font(mario_font(17.0)),
                     );
                 });
+            }
+        });
+}
+
+fn finalist_group_ui(ui: &mut egui::Ui, heading: &str, racers: &[ParticipantView]) {
+    ui.label(
+        egui::RichText::new(heading)
+            .color(AMBER)
+            .font(title_font(16.0)),
+    );
+    for (index, racer) in racers.iter().enumerate() {
+        ui.label(
+            egui::RichText::new(&racer.name)
+                .color(player_color(index))
+                .font(mario_font(17.0)),
+        );
+    }
+}
+
+fn gauntlet_ui(ui: &mut egui::Ui, gauntlet: GauntletView) {
+    banner(ui, "Grand Finals Gauntlet", 24.0);
+    ui.add_space(12.0);
+    ui.label(
+        egui::RichText::new("Finalists")
+            .color(ACTIVE_GREEN_BRIGHT)
+            .font(title_font(20.0)),
+    );
+    ui.add_space(8.0);
+
+    egui::Grid::new("gauntlet_racers")
+        .num_columns(2)
+        .spacing([30.0, 10.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("Racer");
+            ui.strong("Lives");
+            ui.end_row();
+
+            for (index, (racer, lives)) in gauntlet.racers.iter().enumerate() {
+                ui.label(
+                    egui::RichText::new(&racer.name)
+                        .color(player_color(index))
+                        .font(mario_font(18.0)),
+                );
+                ui.label(
+                    egui::RichText::new(lives.to_string())
+                        .color(AMBER)
+                        .strong()
+                        .size(18.0),
+                );
+                ui.end_row();
             }
         });
 }
@@ -1774,7 +1857,7 @@ fn phase_name(view: &TournamentView) -> &'static str {
         TournamentView::Registration(_) => "Registration",
         TournamentView::Pools(_) => "Pools",
         TournamentView::Bracket(_) => "Bracket",
-        TournamentView::Gauntlet => "Grand Finals Gauntlet",
+        TournamentView::Gauntlet(_) => "Grand Finals Gauntlet",
         TournamentView::Complete => "Complete",
     }
 }

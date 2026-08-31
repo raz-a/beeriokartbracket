@@ -48,6 +48,8 @@ impl Gauntlet {
             races: vec![],
         }
     }
+
+    // TODO: Implement advance, get_current_race, get_race_by_index.
 }
 
 #[derive(Debug)]

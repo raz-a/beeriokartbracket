@@ -126,17 +126,23 @@ impl BracketSet {
     }
 
     fn get_scores(&self) -> Vec<(ParticipantId, usize)> {
-        let mut map = HashMap::new();
+        let mut totals = HashMap::new();
 
         for race in self.races.iter() {
             for &(id, place) in race.get_racers_and_placements() {
                 let points = place.map_or(0, |p| p.points());
 
-                map.entry(id).and_modify(|e| *e += points).or_insert(points);
+                totals
+                    .entry(id)
+                    .and_modify(|e| *e += points)
+                    .or_insert(points);
             }
         }
 
-        map.into_iter().collect()
+        self.races[0]
+            .get_racers()
+            .map(|id| (id, totals[&id]))
+            .collect()
     }
 
     fn get_winners_losers(&self, winner_count: usize) -> (Vec<ParticipantId>, Vec<ParticipantId>) {
@@ -220,13 +226,20 @@ impl Bracket {
     }
 
     fn active_set(&self) -> Option<BracketSetId> {
-        for (id, set) in self.bracket_sets.iter() {
-            if set.is_ready() && !set.is_completed() {
-                return Some(id);
-            }
-        }
+        let round_count = self.winners.len().max(self.losers.len());
 
-        None
+        (0..round_count)
+            .flat_map(|round_index| {
+                self.winners
+                    .get(round_index)
+                    .into_iter()
+                    .chain(self.losers.get(round_index))
+            })
+            .flat_map(|round| round.sets.iter().copied())
+            .find(|&id| {
+                let set = &self.bracket_sets[id];
+                set.is_ready() && !set.is_completed()
+            })
     }
 
     pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {

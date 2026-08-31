@@ -11,7 +11,7 @@ use rand::seq::SliceRandom;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([980.0, 720.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1240.0, 720.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -163,6 +163,14 @@ impl eframe::App for TournamentApp {
                 .show(ctx, |ui| {
                     self.scoreboard_sidebar(ui, pool);
                 });
+        }
+
+        if let TournamentView::Bracket(bracket) = &view {
+            egui::SidePanel::right("current_bracket_heat")
+                .resizable(false)
+                .exact_width(320.0)
+                .frame(solid_panel_frame())
+                .show(ctx, |ui| current_bracket_heat_ui(ui, bracket));
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1021,7 +1029,7 @@ impl TournamentApp {
 
         // Pulsing accent for the heat awaiting results.
         let pulse = ((ui.input(|i| i.time) * 2.5).sin() * 0.5 + 0.5) as f32;
-        let active_border = lerp_color(AMBER, AMBER_BRIGHT, pulse);
+        let active_border = lerp_color(ACTIVE_GREEN, ACTIVE_GREEN_BRIGHT, pulse);
         if active_set.is_some() {
             ui.ctx().request_repaint();
         }
@@ -1192,15 +1200,23 @@ impl TournamentApp {
     ) -> f32 {
         let racer_count = set.racers.len() as u8;
         let (stroke_w, stroke_col) = if is_active {
-            (2.5_f32, active_border)
+            (4.0_f32, active_border)
         } else {
             (1.5_f32, AMBER)
         };
         let header_color = if is_active { active_border } else { AMBER };
 
+        if is_active {
+            ui.painter().rect_filled(
+                rect.expand(4.0),
+                egui::Rounding::same(11.0),
+                egui::Color32::from_rgba_unmultiplied(0x66, 0xD4, 0x72, 55),
+            );
+        }
+
         let resp = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
             egui::Frame::none()
-                .fill(CARD_BG)
+                .fill(if is_active { ACTIVE_CARD_BG } else { CARD_BG })
                 .stroke(egui::Stroke::new(stroke_w, stroke_col))
                 .rounding(8.0)
                 .inner_margin(egui::Margin::same(BRACKET_PAD))
@@ -1216,7 +1232,8 @@ impl TournamentApp {
 
                     ui.label(
                         egui::RichText::new(format!(
-                            "Heat {} · {}/{}",
+                            "{}Heat {} · {}/{}",
+                            if is_active { "CURRENT · " } else { "" },
                             index + 1,
                             set.racers.len(),
                             set.expected_size
@@ -1337,14 +1354,113 @@ const BRACKET_LINE_H: f32 = 22.0;
 const BRACKET_PAD: f32 = 11.0;
 const BRACKET_ROW_GAP: f32 = 22.0;
 // Editable heat-grid metrics.
-const BRACKET_NAME_COL_W: f32 = 140.0;
-const BRACKET_GRID_COL_W: f32 = 72.0;
+const BRACKET_NAME_COL_W: f32 = 180.0;
+const BRACKET_GRID_COL_W: f32 = 80.0;
 const BRACKET_GRID_TITLE_H: f32 = 24.0;
 const BRACKET_GRID_HEAD_H: f32 = 22.0;
 const BRACKET_GRID_ROW_H: f32 = 30.0;
 const BRACKET_CARD_SAFETY_PAD: f32 = 16.0;
 // Fill behind the current round's place dropdowns.
 const CURRENT_COL_TINT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x6A, 0x24);
+
+fn active_bracket_set(bracket: &BracketView) -> Option<(String, &BracketSetView)> {
+    let active_id = bracket.active_set?;
+
+    for (round_index, round) in bracket.winners.iter().enumerate() {
+        for (heat_index, (id, set)) in round.sets.iter().enumerate() {
+            if *id == active_id {
+                return Some((
+                    format!(
+                        "Winners · Round {} · Heat {}",
+                        round_index + 1,
+                        heat_index + 1
+                    ),
+                    set,
+                ));
+            }
+        }
+    }
+
+    for (round_index, round) in bracket.losers.iter().enumerate() {
+        for (heat_index, (id, set)) in round.sets.iter().enumerate() {
+            if *id == active_id {
+                return Some((
+                    format!(
+                        "Losers · Round {} · Heat {}",
+                        round_index + 1,
+                        heat_index + 1
+                    ),
+                    set,
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn current_bracket_heat_ui(ui: &mut egui::Ui, bracket: &BracketView) {
+    banner(ui, "Current Heat", 22.0);
+    ui.add_space(10.0);
+
+    let Some((label, set)) = active_bracket_set(bracket) else {
+        ui.label(
+            egui::RichText::new("Bracket complete")
+                .color(ACTIVE_GREEN_BRIGHT)
+                .strong()
+                .size(18.0),
+        );
+        return;
+    };
+
+    egui::Frame::none()
+        .fill(ACTIVE_CARD_BG)
+        .stroke(egui::Stroke::new(2.0_f32, ACTIVE_GREEN_BRIGHT))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(12.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(label)
+                    .color(ACTIVE_GREEN_BRIGHT)
+                    .font(title_font(18.0)),
+            );
+
+            let current_race = set
+                .current_race_index
+                .min(set.races.len().saturating_sub(1));
+            ui.add(
+                egui::ProgressBar::new(
+                    set.current_race_index as f32 / set.races.len().max(1) as f32,
+                )
+                .text(format!("Race {} of {}", current_race + 1, set.races.len())),
+            );
+
+            if let Some(race) = set.races.get(current_race) {
+                let ruleset = match race.ruleset {
+                    RaceRuleset::Vanilla => "Vanilla",
+                    RaceRuleset::Beerio => "Beerio",
+                };
+                ui.label(egui::RichText::new(ruleset).color(AMBER).strong());
+            }
+
+            ui.add_space(8.0);
+            for (index, racer) in set.racers.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{}.", index + 1))
+                            .color(ACTIVE_GREEN_BRIGHT)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(&racer.name)
+                            .color(player_color(index))
+                            .font(mario_font(17.0)),
+                    );
+                });
+            }
+        });
+}
 
 fn round_title(index: usize, round: &BracketRoundView, is_losers: bool) -> String {
     match (is_losers, round.from_wb_round) {
@@ -1668,6 +1784,9 @@ const CREAM: egui::Color32 = egui::Color32::from_rgb(0xFA, 0xF3, 0xE0);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xA6, 0x23);
 const AMBER_BRIGHT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xC6, 0x3C);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(0x45, 0x3A, 0x26);
+const ACTIVE_GREEN: egui::Color32 = egui::Color32::from_rgb(0x52, 0xA8, 0x5D);
+const ACTIVE_GREEN_BRIGHT: egui::Color32 = egui::Color32::from_rgb(0x82, 0xE0, 0x8D);
+const ACTIVE_CARD_BG: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x43, 0x2C);
 
 fn apply_theme(ctx: &egui::Context) {
     use egui::Color32;

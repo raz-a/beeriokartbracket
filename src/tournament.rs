@@ -10,6 +10,12 @@ use crate::race::{Race, RaceId};
 use crate::view::{RegistrationView, TournamentView, Viewable};
 use crate::{BracketSetId, Placement};
 
+// TODO: Add the ability to save and load tournaments.
+
+// TODO: Add ability to go back from states.
+
+// TODO: Look into having this hosted somewhere so others can view the current tourney state.
+
 #[derive(Debug, Default)]
 enum TournamentPhase {
     #[default]

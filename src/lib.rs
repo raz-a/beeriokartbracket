@@ -8,7 +8,9 @@ mod race_group;
 mod tournament;
 mod view;
 
-pub use bracket::{BracketRoundView, BracketSetId, BracketSetView, BracketView};
+pub use bracket::{
+    BracketFeederView, BracketRoundView, BracketSetId, BracketSetView, BracketView, FeederSource,
+};
 pub use config::Config;
 pub use error::TournamentError;
 pub use participant::{ParticipantId, ParticipantView};

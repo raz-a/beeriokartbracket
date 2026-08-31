@@ -425,6 +425,7 @@ dependencies = [
  "beeriokartbracket",
  "eframe",
  "image",
+ "rand 0.10.2",
 ]
 
 [[package]]

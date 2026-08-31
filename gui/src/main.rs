@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::num::NonZero;
 
 use beeriokartbracket::{
-    BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, ParticipantId,
-    ParticipantView, Placement, PoolResultView, PoolView, RaceId, RaceRuleset, RaceView,
-    RegistrationView, Tournament, TournamentError, TournamentView,
+    BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, FeederSource,
+    ParticipantId, ParticipantView, Placement, PoolResultView, PoolView, RaceId, RaceRuleset,
+    RaceView, RegistrationView, Tournament, TournamentError, TournamentView,
 };
 use eframe::egui;
+use rand::seq::SliceRandom;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -27,6 +28,7 @@ enum Action {
     AddMany(usize),
     Remove(ParticipantId),
     Start,
+    SkipToBracket,
     NextRace(Vec<(ParticipantId, Option<Placement>)>),
     EditRace(RaceId, Vec<(ParticipantId, Option<Placement>)>),
     UpdateBracketSet(BracketSetId, usize, Vec<(ParticipantId, Option<Placement>)>),
@@ -275,6 +277,19 @@ impl TournamentApp {
         );
         if start.clicked() {
             *action = Some(Action::Start);
+        }
+        if ui
+            .add_sized(
+                [ui.available_width(), 34.0],
+                egui::Button::new("Skip to bracket"),
+            )
+            .on_hover_text(format!(
+                "Create {} players and simulate the pool stage",
+                self.bracket_size
+            ))
+            .clicked()
+        {
+            *action = Some(Action::SkipToBracket);
         }
         ui.add_space(6.0);
         ui.label(
@@ -746,6 +761,7 @@ impl TournamentApp {
                     Err(e) => Err(e),
                 }
             }
+            Action::SkipToBracket => self.skip_to_bracket(),
             Action::NextRace(results) => match self.tournament.update_active_race(results) {
                 Ok(_) => {
                     self.placement_inputs.clear();
@@ -763,16 +779,24 @@ impl TournamentApp {
                 .tournament
                 .update_completed_race(id, results)
                 .map(|_| "Race corrected".to_owned()),
-            Action::UpdateBracketSet(id, race_index, results) => self
-                .tournament
-                .update_bracket_set(id, race_index, results)
-                .map(|completed| {
-                    if completed {
-                        "Heat complete.".to_owned()
-                    } else {
-                        "Race result saved.".to_owned()
-                    }
-                }),
+            Action::UpdateBracketSet(id, race_index, results) => {
+                match self.tournament.update_bracket_set(id, race_index, results) {
+                    Ok(heat_complete) => match self.tournament.advance_bracket() {
+                        Ok(bracket_complete) => {
+                            self.sync_bracket_edits();
+                            Ok(if bracket_complete {
+                                "Bracket complete. Grand Finals Gauntlet is next.".to_owned()
+                            } else if heat_complete {
+                                "Heat complete. The bracket has advanced.".to_owned()
+                            } else {
+                                "Race result saved.".to_owned()
+                            })
+                        }
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                }
+            }
             Action::Next => self
                 .tournament
                 .next_phase()
@@ -786,6 +810,84 @@ impl TournamentApp {
                 self.error = Some(describe_error(&e));
             }
         }
+    }
+
+    fn sync_bracket_edits(&mut self) {
+        let TournamentView::Bracket(bracket) = self.tournament.view() else {
+            return;
+        };
+
+        self.bracket_edits.clear();
+        for (set_id, set) in bracket
+            .winners
+            .iter()
+            .chain(&bracket.losers)
+            .flat_map(|round| &round.sets)
+        {
+            for (race_index, race) in set.races.iter().enumerate() {
+                for (participant, placement) in &race.racers {
+                    if let Some(placement) = placement {
+                        self.bracket_edits.insert(
+                            (*set_id, race_index, participant.id),
+                            placement.placement().to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn skip_to_bracket(&mut self) -> Result<String, TournamentError> {
+        let player_count = self.bracket_size;
+
+        self.tournament = Tournament::default();
+        self.placement_inputs.clear();
+        self.race_edits.clear();
+        self.bracket_edits.clear();
+        self.bracket_heights.clear();
+
+        for number in 1..=player_count {
+            self.tournament
+                .add_participant(&format!("Player{number}"))?;
+        }
+
+        self.tournament.set_config(Config {
+            pool_rounds: NonZero::new(self.pool_rounds).expect("pool rounds are at least one"),
+            bracket_size: NonZero::new(player_count).expect("bracket size is at least one"),
+            bracket_races_per_round: NonZero::new(self.races_per_round)
+                .expect("races per heat are at least one"),
+            seed: rand::random(),
+        })?;
+        self.tournament.next_phase()?;
+        self.tournament.advance_pools()?;
+
+        let mut rng = rand::rng();
+        loop {
+            let TournamentView::Pools((pool, _)) = self.tournament.view() else {
+                return Err(TournamentError::WrongPhase);
+            };
+            let race = pool.current_race.ok_or(TournamentError::RaceNotFound)?;
+            let mut places: Vec<u8> = (1..=race.racers.len() as u8).collect();
+            places.shuffle(&mut rng);
+            let results = race
+                .racers
+                .iter()
+                .zip(places)
+                .map(|((participant, _), place)| {
+                    (participant.id, Some(Placement::new(place).unwrap()))
+                })
+                .collect();
+
+            self.tournament.update_active_race(results)?;
+            if self.tournament.advance_pools()? {
+                break;
+            }
+        }
+
+        self.tournament.next_phase()?;
+        Ok(format!(
+            "Created {player_count} players and simulated pools."
+        ))
     }
 }
 
@@ -845,18 +947,58 @@ impl TournamentApp {
         ui.add_space(10.0);
 
         let active = bracket.active_set;
+        let set_labels: HashMap<BracketSetId, String> = bracket
+            .winners
+            .iter()
+            .enumerate()
+            .flat_map(|(round_index, round)| {
+                round
+                    .sets
+                    .iter()
+                    .enumerate()
+                    .map(move |(heat_index, (id, _))| {
+                        (
+                            *id,
+                            format!("Winners R{}-H{}", round_index + 1, heat_index + 1),
+                        )
+                    })
+            })
+            .chain(
+                bracket
+                    .losers
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(round_index, round)| {
+                        round
+                            .sets
+                            .iter()
+                            .enumerate()
+                            .map(move |(heat_index, (id, _))| {
+                                (
+                                    *id,
+                                    format!("Losers R{}-H{}", round_index + 1, heat_index + 1),
+                                )
+                            })
+                    }),
+            )
+            .collect();
+        banner(ui, "Winners", 20.0);
+        ui.add_space(8.0);
         egui::ScrollArea::horizontal()
-            .id_salt("bracket_scroll")
+            .id_salt("winners_bracket_scroll")
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                banner(ui, "Winners", 20.0);
-                ui.add_space(8.0);
-                self.draw_bracket_section(ui, &bracket.winners, false, active, action);
+                self.draw_bracket_section(ui, &bracket.winners, false, active, &set_labels, action);
+            });
 
-                ui.add_space(28.0);
-                banner(ui, "Losers", 20.0);
-                ui.add_space(8.0);
-                self.draw_bracket_section(ui, &bracket.losers, true, active, action);
+        ui.add_space(28.0);
+        banner(ui, "Losers", 20.0);
+        ui.add_space(8.0);
+        egui::ScrollArea::horizontal()
+            .id_salt("losers_bracket_scroll")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                self.draw_bracket_section(ui, &bracket.losers, true, active, &set_labels, action);
             });
     }
 
@@ -869,6 +1011,7 @@ impl TournamentApp {
         rounds: &[BracketRoundView],
         is_losers: bool,
         active_set: Option<BracketSetId>,
+        set_labels: &HashMap<BracketSetId, String>,
         action: &mut Option<Action>,
     ) {
         if rounds.is_empty() {
@@ -902,6 +1045,7 @@ impl TournamentApp {
                     + BRACKET_GRID_TITLE_H
                     + BRACKET_GRID_HEAD_H
                     + rows * BRACKET_GRID_ROW_H
+                    + BRACKET_CARD_SAFETY_PAD
             } else {
                 BRACKET_PAD
                     + BRACKET_HEADER_H
@@ -930,11 +1074,14 @@ impl TournamentApp {
             .collect();
 
         // Canvas is as tall as the round that needs the most vertical space.
-        let mut content_h: f32 = 0.0;
-        for hs in &heights {
-            let h: f32 = BRACKET_ROW_GAP + hs.iter().map(|x| x + BRACKET_ROW_GAP).sum::<f32>();
-            content_h = content_h.max(h);
-        }
+        let content_h = heights
+            .iter()
+            .map(|round| {
+                round.iter().sum::<f32>()
+                    + round.len().saturating_sub(1) as f32 * BRACKET_ROW_GAP
+                    + 2.0 * BRACKET_ROW_GAP
+            })
+            .fold(0.0_f32, f32::max);
         let total_h = BRACKET_COL_HEADER + content_h;
         let total_w = rounds.len() as f32 * (card_w + BRACKET_COL_GAP);
 
@@ -945,15 +1092,16 @@ impl TournamentApp {
         let mut round_rects: Vec<Vec<egui::Rect>> = Vec::with_capacity(rounds.len());
         for (r, round) in rounds.iter().enumerate() {
             let x = canvas.min.x + r as f32 * (card_w + BRACKET_COL_GAP) + BRACKET_COL_GAP * 0.5;
-            let n = round.sets.len().max(1);
+            let column_h = heights[r].iter().sum::<f32>()
+                + heights[r].len().saturating_sub(1) as f32 * BRACKET_ROW_GAP;
+            let mut y = canvas.min.y + BRACKET_COL_HEADER + (content_h - column_h) * 0.5;
             let mut rects = Vec::with_capacity(round.sets.len());
-            for (j, &h) in heights[r].iter().enumerate() {
-                let cy =
-                    canvas.min.y + BRACKET_COL_HEADER + content_h * (j as f32 + 0.5) / n as f32;
+            for &h in &heights[r] {
                 rects.push(egui::Rect::from_min_size(
-                    egui::pos2(x, cy - h * 0.5),
+                    egui::pos2(x, y),
                     egui::vec2(card_w, h),
                 ));
+                y += h + BRACKET_ROW_GAP;
             }
             round_rects.push(rects);
         }
@@ -998,7 +1146,7 @@ impl TournamentApp {
                     let is_active = active_set == Some(*id);
                     let h = self.bracket_grid_card(
                         ui,
-                        rect,
+                        rect.shrink2(egui::vec2(0.0, BRACKET_CARD_SAFETY_PAD * 0.5)),
                         j,
                         *id,
                         set,
@@ -1008,8 +1156,7 @@ impl TournamentApp {
                     );
                     measured.push((*id, h));
                 } else {
-                    let lines: Vec<String> =
-                        (0..set.expected_size).map(|_| "—".to_owned()).collect();
+                    let lines = bracket_placeholder_lines(set, set_labels);
                     paint_heat_card(&painter, rect, j, set, &lines, false, active_border);
                 }
             }
@@ -1195,6 +1342,7 @@ const BRACKET_GRID_COL_W: f32 = 72.0;
 const BRACKET_GRID_TITLE_H: f32 = 24.0;
 const BRACKET_GRID_HEAD_H: f32 = 22.0;
 const BRACKET_GRID_ROW_H: f32 = 30.0;
+const BRACKET_CARD_SAFETY_PAD: f32 = 16.0;
 // Fill behind the current round's place dropdowns.
 const CURRENT_COL_TINT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x6A, 0x24);
 
@@ -1219,6 +1367,46 @@ fn paint_chip_text(painter: &egui::Painter, center: egui::Pos2, text: &str) {
     painter.galley(rect.min + pad, galley, AMBER);
 }
 
+fn bracket_placeholder_lines(
+    set: &BracketSetView,
+    set_labels: &HashMap<BracketSetId, String>,
+) -> Vec<String> {
+    let mut racers = set.racers.iter();
+    let mut lines = Vec::with_capacity(set.expected_size);
+
+    if set.feeders.is_empty() {
+        lines.extend(racers.by_ref().map(|racer| racer.name.clone()));
+    } else {
+        for feeder in &set.feeders {
+            if feeder.is_resolved {
+                lines.extend(
+                    racers
+                        .by_ref()
+                        .take(feeder.racer_count)
+                        .map(|racer| racer.name.clone()),
+                );
+            } else {
+                let result = match feeder.source {
+                    FeederSource::Winners => "Winner",
+                    FeederSource::Losers => "Loser",
+                };
+                let source = set_labels
+                    .get(&feeder.set_id)
+                    .map(String::as_str)
+                    .unwrap_or("unknown heat");
+                lines.extend(std::iter::repeat_n(
+                    format!("{result} from {source}"),
+                    feeder.racer_count,
+                ));
+            }
+        }
+    }
+
+    lines.extend(racers.map(|racer| racer.name.clone()));
+    lines.resize(set.expected_size, "—".to_owned());
+    lines
+}
+
 fn paint_heat_card(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -1229,7 +1417,8 @@ fn paint_heat_card(
     active_border: egui::Color32,
 ) {
     let rounding = egui::Rounding::same(8.0);
-    painter.rect_filled(rect, rounding, CARD_BG);
+    let pending_bg = egui::Color32::from_rgb(0x22, 0x1D, 0x15);
+    painter.rect_filled(rect, rounding, pending_bg);
     if is_active {
         // Bright pulsing border plus a soft outer ring to flag the set awaiting results.
         painter.rect_stroke(
@@ -1239,7 +1428,11 @@ fn paint_heat_card(
         );
         painter.rect_stroke(rect, rounding, egui::Stroke::new(3.0_f32, active_border));
     } else {
-        painter.rect_stroke(rect, rounding, egui::Stroke::new(1.5_f32, AMBER));
+        painter.rect_stroke(
+            rect,
+            rounding,
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0xA8, 0x80, 0x30)),
+        );
     }
 
     let header_color = if is_active { active_border } else { AMBER };
@@ -1247,11 +1440,10 @@ fn paint_heat_card(
         rect.min + egui::vec2(BRACKET_PAD, BRACKET_PAD),
         egui::Align2::LEFT_TOP,
         format!(
-            "Heat {} · {}/{}{}",
+            "Heat {} · {}/{} RACERS",
             index + 1,
             set.racers.len(),
-            set.expected_size,
-            if is_active { "  \u{25B6}" } else { "" }
+            set.expected_size
         ),
         egui::FontId::proportional(17.0),
         header_color,
@@ -1266,22 +1458,57 @@ fn paint_heat_card(
         egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0xA8, 0x80, 0x30)),
     );
 
-    let empty = set.racers.is_empty();
-    let name_color = if empty {
-        egui::Color32::from_rgb(0x9B, 0x8A, 0x66)
-    } else {
-        CREAM
-    };
     for (k, line) in lines.iter().enumerate() {
+        let row_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.min.x + BRACKET_PAD - 3.0,
+                rect.min.y + BRACKET_PAD + BRACKET_HEADER_H + k as f32 * BRACKET_LINE_H - 1.0,
+            ),
+            egui::vec2(rect.width() - 2.0 * BRACKET_PAD + 6.0, BRACKET_LINE_H),
+        );
+        if k.is_multiple_of(2) {
+            painter.rect_filled(
+                row_rect,
+                egui::Rounding::same(3.0),
+                egui::Color32::from_rgb(0x2E, 0x27, 0x1B),
+            );
+        }
+
+        let is_feeder = line.contains(" from ");
+        let marker = if line.starts_with("Winner") {
+            "W"
+        } else if line.starts_with("Loser") {
+            "L"
+        } else {
+            "•"
+        };
+        let marker_color = if line.starts_with("Winner") {
+            egui::Color32::from_rgb(0x70, 0xC4, 0x78)
+        } else if line.starts_with("Loser") {
+            egui::Color32::from_rgb(0xE0, 0x78, 0x62)
+        } else {
+            AMBER
+        };
+        painter.text(
+            row_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            marker,
+            title_font(13.0),
+            marker_color,
+        );
         painter.text(
             egui::pos2(
-                rect.min.x + BRACKET_PAD,
+                rect.min.x + BRACKET_PAD + 18.0,
                 rect.min.y + BRACKET_PAD + BRACKET_HEADER_H + k as f32 * BRACKET_LINE_H,
             ),
             egui::Align2::LEFT_TOP,
             line,
-            egui::FontId::proportional(18.0),
-            name_color,
+            egui::FontId::proportional(if is_feeder { 15.0 } else { 18.0 }),
+            if is_feeder {
+                egui::Color32::from_rgb(0xBA, 0xAA, 0x88)
+            } else {
+                CREAM
+            },
         );
     }
 }
@@ -1610,4 +1837,79 @@ fn load_background(ctx: &egui::Context) -> Option<egui::TextureHandle> {
             ..egui::TextureOptions::LINEAR
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beeriokartbracket::BracketFeederView;
+
+    #[test]
+    fn partial_heat_lines_mix_feeder_labels_and_racer_names() {
+        let source_id = BracketSetId::default();
+        let set = BracketSetView {
+            expected_size: 4,
+            racers: vec![
+                ParticipantView {
+                    id: ParticipantId::default(),
+                    name: "Alice".to_owned(),
+                },
+                ParticipantView {
+                    id: ParticipantId::default(),
+                    name: "Bob".to_owned(),
+                },
+            ],
+            races: Vec::new(),
+            feeders: vec![
+                BracketFeederView {
+                    set_id: source_id,
+                    source: FeederSource::Losers,
+                    racer_count: 2,
+                    is_resolved: false,
+                },
+                BracketFeederView {
+                    set_id: source_id,
+                    source: FeederSource::Winners,
+                    racer_count: 2,
+                    is_resolved: true,
+                },
+            ],
+            current_race_index: 0,
+            is_ready: false,
+        };
+        let labels = HashMap::from([(source_id, "Winners R1-H1".to_owned())]);
+
+        assert_eq!(
+            bracket_placeholder_lines(&set, &labels),
+            vec![
+                "Loser from Winners R1-H1",
+                "Loser from Winners R1-H1",
+                "Alice",
+                "Bob",
+            ]
+        );
+    }
+
+    #[test]
+    fn skip_to_bracket_respects_the_configured_bracket_size() {
+        let mut app = TournamentApp {
+            bracket_size: 12,
+            ..Default::default()
+        };
+
+        app.skip_to_bracket().unwrap();
+
+        let TournamentView::Bracket(bracket) = app.tournament.view() else {
+            panic!("shortcut did not reach the bracket");
+        };
+        assert!(bracket.winners[0].sets.iter().all(|(_, set)| set.is_ready));
+        assert_eq!(
+            bracket.winners[0]
+                .sets
+                .iter()
+                .map(|(_, set)| set.racers.len())
+                .sum::<usize>(),
+            12
+        );
+    }
 }

@@ -12,8 +12,8 @@ use crate::{
 
 new_key_type! { pub struct BracketSetId; }
 
-#[derive(Debug)]
-pub(crate) enum FeederSource {
+#[derive(Debug, Clone, Copy)]
+pub enum FeederSource {
     Winners,
     Losers,
 }
@@ -511,10 +511,19 @@ pub struct BracketSetView {
     pub expected_size: usize,
     pub racers: Vec<ParticipantView>,
     pub races: Vec<RaceView>,
+    pub feeders: Vec<BracketFeederView>,
     /// Index of the next race to run; races before it are complete.
     pub current_race_index: usize,
     /// Whether the heat is fully seeded and can accept results.
     pub is_ready: bool,
+}
+
+#[derive(Debug)]
+pub struct BracketFeederView {
+    pub set_id: BracketSetId,
+    pub source: FeederSource,
+    pub racer_count: usize,
+    pub is_resolved: bool,
 }
 
 #[derive(Debug)]
@@ -542,6 +551,7 @@ impl Viewable<BracketSetView> for BracketSet {
             expected_size: self.expected_size,
             racers,
             races: self.races.iter().map(|race| race.view(id_map)).collect(),
+            feeders: Vec::new(),
             current_race_index: self.current_race_index(),
             is_ready: self.is_ready(),
         }
@@ -558,7 +568,23 @@ impl Viewable<BracketView> for Bracket {
             sets: round
                 .sets
                 .iter()
-                .map(|&id| (id, self.bracket_sets[id].view(id_map)))
+                .map(|&id| {
+                    let mut view = self.bracket_sets[id].view(id_map);
+                    view.feeders = self.bracket_sets[id]
+                        .feeders
+                        .iter()
+                        .map(|feeder| {
+                            let source_set = &self.bracket_sets[feeder.id];
+                            BracketFeederView {
+                                set_id: feeder.id,
+                                source: feeder.source,
+                                racer_count: Self::feeder_group_size(feeder, &self.bracket_sets),
+                                is_resolved: source_set.is_completed(),
+                            }
+                        })
+                        .collect();
+                    (id, view)
+                })
                 .collect(),
         };
 

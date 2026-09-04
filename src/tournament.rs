@@ -96,7 +96,7 @@ impl Tournament {
                 self.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
                     winners,
                     losers,
-                    self.config.gauntlet_lives.into(),
+                    self.config.gauntlet_lives,
                 )));
 
                 Ok(())

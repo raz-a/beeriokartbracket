@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use slotmap::new_key_type;
 
 use crate::error::TournamentError;
@@ -31,6 +33,22 @@ impl Placement {
 
     pub fn placement_idx(&self) -> u8 {
         self.placement() - 1
+    }
+
+    pub fn move_up(self) -> Option<Self> {
+        if self.placement_idx() == 0 {
+            None
+        } else {
+            Some(Placement(self.placement_idx()))
+        }
+    }
+
+    pub fn move_down(self) -> Option<Self> {
+        if self.placement() == MAX_RACERS as u8 {
+            None
+        } else {
+            Some(Placement(self.placement() + 1))
+        }
     }
 }
 
@@ -108,6 +126,17 @@ impl Race {
 
     pub fn get_racers_and_placements(&self) -> &[(ParticipantId, Option<Placement>)] {
         &self.racers
+    }
+
+    pub fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
+        let mut set: HashSet<_> = self.get_racers().collect();
+        for id in racers {
+            if !set.remove(id) {
+                return false;
+            }
+        }
+
+        set.is_empty()
     }
 }
 

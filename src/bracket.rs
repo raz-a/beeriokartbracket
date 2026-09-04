@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use slotmap::{SlotMap, new_key_type};
 
@@ -104,14 +104,7 @@ impl BracketSet {
     }
 
     fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
-        let mut set: HashSet<_> = self.races[0].get_racers().collect();
-        for id in racers {
-            if !set.remove(id) {
-                return false;
-            }
-        }
-
-        set.is_empty()
+        self.races[0].contains_racers(racers)
     }
 
     fn current_race_index(&self) -> usize {

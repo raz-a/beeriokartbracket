@@ -204,6 +204,8 @@ impl Tournament {
         Self::update_race(race, results)?;
         Ok(set.is_completed())
     }
+
+    // TODO: Add Gauntlet functions.
 }
 
 impl Viewable<TournamentView> for Tournament {

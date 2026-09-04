@@ -3,8 +3,11 @@ name = "beeriokartbracket-gui"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+manual-validation = ["dep:rand"]
+
 [dependencies]
 beeriokartbracket = { path = ".." }
 eframe = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
-rand = "0.10.2"
+rand = { version = "0.10.2", optional = true }

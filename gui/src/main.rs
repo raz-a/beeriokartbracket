@@ -7,6 +7,7 @@ use beeriokartbracket::{
     RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError, TournamentView,
 };
 use eframe::egui;
+#[cfg(feature = "manual-validation")]
 use rand::seq::SliceRandom;
 
 fn main() -> eframe::Result {
@@ -25,19 +26,25 @@ fn main() -> eframe::Result {
 /// frame so rendering only ever reads the (owned) view snapshot.
 enum Action {
     Add(String),
+    #[cfg(feature = "manual-validation")]
     AddMany(usize),
     Remove(ParticipantId),
     Start,
+    #[cfg(feature = "manual-validation")]
     SkipToBracket,
+    #[cfg(feature = "manual-validation")]
+    SkipToGauntlet,
     NextRace(Vec<(ParticipantId, Option<Placement>)>),
     EditRace(RaceId, Vec<(ParticipantId, Option<Placement>)>),
     UpdateBracketSet(BracketSetId, usize, Vec<(ParticipantId, Option<Placement>)>),
+    UpdateGauntletRace(usize, Vec<(ParticipantId, Option<Placement>)>),
     Next,
 }
 
 struct TournamentApp {
     tournament: Tournament,
     new_name: String,
+    #[cfg(feature = "manual-validation")]
     add_count: usize,
     pool_rounds: usize,
     bracket_size: usize,
@@ -49,6 +56,8 @@ struct TournamentApp {
     race_edits: HashMap<(RaceId, ParticipantId), String>,
     // Place text entry for a bracket set's races, keyed by (set, race index, racer).
     bracket_edits: HashMap<(BracketSetId, usize, ParticipantId), String>,
+    // Place text entry for gauntlet races, keyed by (race index, racer).
+    gauntlet_edits: HashMap<(usize, ParticipantId), String>,
     // Last-frame measured heat-card heights, for stable tree layout.
     bracket_heights: HashMap<BracketSetId, f32>,
     show_scores: bool,
@@ -63,6 +72,7 @@ impl Default for TournamentApp {
         Self {
             tournament: Tournament::default(),
             new_name: String::new(),
+            #[cfg(feature = "manual-validation")]
             add_count: 16,
             pool_rounds: 8,
             bracket_size: 16,
@@ -71,6 +81,7 @@ impl Default for TournamentApp {
             placement_inputs: HashMap::new(),
             race_edits: HashMap::new(),
             bracket_edits: HashMap::new(),
+            gauntlet_edits: HashMap::new(),
             bracket_heights: HashMap::new(),
             show_scores: false,
             status: String::new(),
@@ -182,7 +193,9 @@ impl eframe::App for TournamentApp {
                 TournamentView::Registration(reg) => self.registration_ui(ui, reg, &mut action),
                 TournamentView::Pools(pool) => self.pools_ui(ui, pool.0, pool.1, &mut action),
                 TournamentView::Bracket(bracket) => self.bracket_ui(ui, bracket, &mut action),
-                TournamentView::Gauntlet(gauntlet) => gauntlet_ui(ui, gauntlet),
+                TournamentView::Gauntlet(gauntlet) => {
+                    gauntlet_ui(ui, gauntlet, &mut self.gauntlet_edits, &mut action)
+                }
                 TournamentView::Complete => {
                     ui.label("The tournament is complete.");
                 }
@@ -214,6 +227,7 @@ impl TournamentApp {
             }
         });
 
+        #[cfg(feature = "manual-validation")]
         ui.horizontal(|ui| {
             ui.label("Bulk add:");
             ui.add(egui::DragValue::new(&mut self.add_count).range(1..=128));
@@ -291,18 +305,34 @@ impl TournamentApp {
         if start.clicked() {
             *action = Some(Action::Start);
         }
-        if ui
-            .add_sized(
-                [ui.available_width(), 34.0],
-                egui::Button::new("Skip to bracket"),
-            )
-            .on_hover_text(format!(
-                "Create {} players and simulate the pool stage",
-                self.bracket_size
-            ))
-            .clicked()
+        #[cfg(feature = "manual-validation")]
         {
-            *action = Some(Action::SkipToBracket);
+            if ui
+                .add_sized(
+                    [ui.available_width(), 34.0],
+                    egui::Button::new("Skip to bracket"),
+                )
+                .on_hover_text(format!(
+                    "Create {} players and simulate the pool stage",
+                    self.bracket_size
+                ))
+                .clicked()
+            {
+                *action = Some(Action::SkipToBracket);
+            }
+            if ui
+                .add_sized(
+                    [ui.available_width(), 34.0],
+                    egui::Button::new("Skip to gauntlet"),
+                )
+                .on_hover_text(format!(
+                    "Create {} players and simulate pools and bracket",
+                    self.bracket_size
+                ))
+                .clicked()
+            {
+                *action = Some(Action::SkipToGauntlet);
+            }
         }
         ui.add_space(6.0);
         ui.label(
@@ -736,6 +766,7 @@ impl TournamentApp {
                 }
                 result
             }
+            #[cfg(feature = "manual-validation")]
             Action::AddMany(count) => {
                 let start = match self.tournament.view() {
                     TournamentView::Registration(reg) => reg.participants.len(),
@@ -775,7 +806,10 @@ impl TournamentApp {
                     Err(e) => Err(e),
                 }
             }
+            #[cfg(feature = "manual-validation")]
             Action::SkipToBracket => self.skip_to_bracket(),
+            #[cfg(feature = "manual-validation")]
+            Action::SkipToGauntlet => self.skip_to_gauntlet(),
             Action::NextRace(results) => match self.tournament.update_active_race(results) {
                 Ok(_) => {
                     self.placement_inputs.clear();
@@ -811,10 +845,29 @@ impl TournamentApp {
                     Err(error) => Err(error),
                 }
             }
-            Action::Next => self
-                .tournament
-                .next_phase()
-                .map(|_| "Advanced to next phase".to_owned()),
+            Action::UpdateGauntletRace(race_index, results) => {
+                match self.tournament.update_gauntlet_race(race_index, results) {
+                    Ok(_) => match self.tournament.advance_gauntlet() {
+                        Ok(complete) => {
+                            self.sync_gauntlet_edits();
+                            Ok(if complete {
+                                "Gauntlet complete. The champion is decided.".to_owned()
+                            } else {
+                                "Gauntlet race saved. Next race ready.".to_owned()
+                            })
+                        }
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                }
+            }
+            Action::Next => self.tournament.next_phase().and_then(|_| {
+                if matches!(self.tournament.view(), TournamentView::Gauntlet(_)) {
+                    self.tournament.advance_gauntlet()?;
+                    self.sync_gauntlet_edits();
+                }
+                Ok("Advanced to next phase".to_owned())
+            }),
         };
 
         match outcome {
@@ -851,6 +904,26 @@ impl TournamentApp {
         }
     }
 
+    fn sync_gauntlet_edits(&mut self) {
+        let TournamentView::Gauntlet(gauntlet) = self.tournament.view() else {
+            self.gauntlet_edits.clear();
+            return;
+        };
+
+        self.gauntlet_edits.clear();
+        for (race_index, race) in gauntlet.races.iter().enumerate() {
+            for (participant, placement) in &race.racers {
+                if let Some(placement) = placement {
+                    self.gauntlet_edits.insert(
+                        (race_index, participant.id),
+                        placement.placement().to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "manual-validation")]
     fn skip_to_bracket(&mut self) -> Result<String, TournamentError> {
         let player_count = self.bracket_size;
 
@@ -858,6 +931,7 @@ impl TournamentApp {
         self.placement_inputs.clear();
         self.race_edits.clear();
         self.bracket_edits.clear();
+        self.gauntlet_edits.clear();
         self.bracket_heights.clear();
 
         for number in 1..=player_count {
@@ -904,6 +978,50 @@ impl TournamentApp {
         Ok(format!(
             "Created {player_count} players and simulated pools."
         ))
+    }
+
+    #[cfg(feature = "manual-validation")]
+    fn skip_to_gauntlet(&mut self) -> Result<String, TournamentError> {
+        self.skip_to_bracket()?;
+
+        loop {
+            let TournamentView::Bracket(bracket) = self.tournament.view() else {
+                return Err(TournamentError::WrongPhase);
+            };
+            let Some(active_id) = bracket.active_set else {
+                break;
+            };
+            let active_set = bracket
+                .winners
+                .iter()
+                .chain(&bracket.losers)
+                .flat_map(|round| &round.sets)
+                .find(|(id, _)| *id == active_id)
+                .map(|(_, set)| set)
+                .ok_or(TournamentError::InvalidBracketId)?;
+
+            for (race_index, race) in active_set.races.iter().enumerate() {
+                let results = race
+                    .racers
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (participant, _))| {
+                        (
+                            participant.id,
+                            Some(Placement::new((index + 1) as u8).unwrap()),
+                        )
+                    })
+                    .collect();
+                self.tournament
+                    .update_bracket_set(active_id, race_index, results)?;
+            }
+            self.tournament.advance_bracket()?;
+        }
+
+        self.tournament.next_phase()?;
+        self.tournament.advance_gauntlet()?;
+        self.sync_gauntlet_edits();
+        Ok("Created players and simulated pools and bracket.".to_owned())
     }
 }
 
@@ -1532,40 +1650,344 @@ fn finalist_group_ui(ui: &mut egui::Ui, heading: &str, racers: &[ParticipantView
     }
 }
 
-fn gauntlet_ui(ui: &mut egui::Ui, gauntlet: GauntletView) {
+fn gauntlet_ui(
+    ui: &mut egui::Ui,
+    gauntlet: GauntletView,
+    edits: &mut HashMap<(usize, ParticipantId), String>,
+    action: &mut Option<Action>,
+) {
+    let active_race_index = gauntlet
+        .races
+        .iter()
+        .rposition(|race| race.racers.iter().any(|(_, placement)| placement.is_none()));
+
     banner(ui, "Grand Finals Gauntlet", 24.0);
     ui.add_space(12.0);
-    ui.label(
-        egui::RichText::new("Finalists")
-            .color(ACTIVE_GREEN_BRIGHT)
-            .font(title_font(20.0)),
-    );
-    ui.add_space(8.0);
-
-    egui::Grid::new("gauntlet_racers")
-        .num_columns(2)
-        .spacing([30.0, 10.0])
-        .striped(true)
+    egui::Frame::none()
+        .fill(CARD_BG)
+        .stroke(egui::Stroke::new(1.0_f32, AMBER))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
-            ui.strong("Racer");
-            ui.strong("Lives");
-            ui.end_row();
+            egui::ScrollArea::horizontal()
+                .id_salt("gauntlet_table_scroll")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    const PLACE_WIDTH: f32 = 72.0;
+                    const RACER_WIDTH: f32 = 240.0;
+                    const LIVES_WIDTH: f32 = 64.0;
+                    const RACE_WIDTH: f32 = 112.0;
+                    const HEADER_HEIGHT: f32 = 56.0;
+                    const ROW_HEIGHT: f32 = 48.0;
+                    const FOOTER_HEIGHT: f32 = 56.0;
 
-            for (index, racer) in gauntlet.racers.iter().enumerate() {
-                ui.label(
-                    egui::RichText::new(&racer.participant.name)
-                        .color(player_color(index))
-                        .font(mario_font(18.0)),
-                );
-                ui.label(
-                    egui::RichText::new(racer.lives.to_string())
-                        .color(AMBER)
+                    let table_size = egui::vec2(
+                        PLACE_WIDTH
+                            + RACER_WIDTH
+                            + LIVES_WIDTH
+                            + RACE_WIDTH * gauntlet.races.len() as f32,
+                        HEADER_HEIGHT + ROW_HEIGHT * gauntlet.racers.len() as f32 + FOOTER_HEIGHT,
+                    );
+                    let (table_rect, _) = ui.allocate_exact_size(table_size, egui::Sense::hover());
+
+                    for row in 0..gauntlet.racers.len() {
+                        if row.is_multiple_of(2) {
+                            let row_rect = egui::Rect::from_min_size(
+                                table_rect.min
+                                    + egui::vec2(0.0, HEADER_HEIGHT + row as f32 * ROW_HEIGHT),
+                                egui::vec2(table_size.x, ROW_HEIGHT),
+                            );
+                            ui.painter().rect_filled(
+                                row_rect,
+                                0.0,
+                                egui::Color32::from_rgb(0x3B, 0x31, 0x20),
+                            );
+                        }
+                    }
+
+                    if let Some(active_race_index) = active_race_index {
+                        let active_rect = egui::Rect::from_min_size(
+                            table_rect.min
+                                + egui::vec2(
+                                    RACER_WIDTH
+                                        + PLACE_WIDTH
+                                        + LIVES_WIDTH
+                                        + active_race_index as f32 * RACE_WIDTH,
+                                    0.0,
+                                ),
+                            egui::vec2(RACE_WIDTH, table_size.y),
+                        );
+                        ui.painter().rect_filled(
+                            active_rect,
+                            0.0,
+                            egui::Color32::from_rgb(0x24, 0x4D, 0x2B),
+                        );
+                        ui.painter().rect_stroke(
+                            active_rect,
+                            0.0,
+                            egui::Stroke::new(2.0_f32, ACTIVE_GREEN_BRIGHT),
+                        );
+                    }
+
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(table_rect), |ui| {
+                        egui::Grid::new("gauntlet_race_table")
+                            .num_columns(gauntlet.races.len() + 3)
+                            .spacing([0.0, 0.0])
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    [PLACE_WIDTH, HEADER_HEIGHT],
+                                    egui::Label::new(
+                                        egui::RichText::new("Place")
+                                            .color(ACTIVE_GREEN_BRIGHT)
+                                            .font(title_font(17.0)),
+                                    ),
+                                );
+                                ui.add_sized(
+                                    [RACER_WIDTH, HEADER_HEIGHT],
+                                    egui::Label::new(
+                                        egui::RichText::new("Racer")
+                                            .color(ACTIVE_GREEN_BRIGHT)
+                                            .font(title_font(17.0)),
+                                    ),
+                                );
+                                ui.add_sized(
+                                    [LIVES_WIDTH, HEADER_HEIGHT],
+                                    egui::Label::new(
+                                        egui::RichText::new("Lives")
+                                            .color(ACTIVE_GREEN_BRIGHT)
+                                            .font(title_font(17.0)),
+                                    ),
+                                );
+                                for (race_index, race) in gauntlet.races.iter().enumerate() {
+                                    let (emoji, kind) = match race.ruleset {
+                                        RaceRuleset::Beerio => ("🍺", "Beerio"),
+                                        RaceRuleset::Vanilla => ("🏁", "Vanilla"),
+                                    };
+                                    let is_active = active_race_index == Some(race_index);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(RACE_WIDTH, HEADER_HEIGHT),
+                                        egui::Layout::top_down(egui::Align::Center),
+                                        |ui| {
+                                            ui.add_space(5.0);
+                                            ui.label(
+                                                egui::RichText::new(format!("R{}", race_index + 1))
+                                                    .color(if is_active {
+                                                        ACTIVE_GREEN_BRIGHT
+                                                    } else {
+                                                        AMBER
+                                                    })
+                                                    .font(title_font(16.0)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!("{emoji}  {kind}"))
+                                                    .color(if is_active { CREAM } else { AMBER })
+                                                    .size(13.0),
+                                            );
+                                        },
+                                    );
+                                }
+                                ui.end_row();
+
+                                for (row, racer) in gauntlet.racers.iter().enumerate() {
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(PLACE_WIDTH, ROW_HEIGHT),
+                                        egui::Layout::centered_and_justified(
+                                            egui::Direction::LeftToRight,
+                                        ),
+                                        |ui| {
+                                            if let Some(placement) = racer.placement {
+                                                ui.label(
+                                                    egui::RichText::new(ordinal(
+                                                        placement.placement(),
+                                                    ))
+                                                    .color(AMBER_BRIGHT)
+                                                    .strong()
+                                                    .size(15.0),
+                                                );
+                                            }
+                                        },
+                                    );
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(RACER_WIDTH, ROW_HEIGHT),
+                                        egui::Layout::centered_and_justified(
+                                            egui::Direction::LeftToRight,
+                                        ),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(&racer.participant.name)
+                                                    .color(player_color(row))
+                                                    .font(mario_font(18.0)),
+                                            );
+                                        },
+                                    );
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(LIVES_WIDTH, ROW_HEIGHT),
+                                        egui::Layout::centered_and_justified(
+                                            egui::Direction::LeftToRight,
+                                        ),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(racer.lives.to_string())
+                                                    .color(if racer.lives == 0 {
+                                                        egui::Color32::from_rgb(0xD8, 0x76, 0x62)
+                                                    } else {
+                                                        AMBER_BRIGHT
+                                                    })
+                                                    .strong()
+                                                    .size(20.0),
+                                            );
+                                        },
+                                    );
+
+                                    for (race_index, race) in gauntlet.races.iter().enumerate() {
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(RACE_WIDTH, ROW_HEIGHT),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                if let Some((participant, placement)) =
+                                                    race.racers.iter().find(|(participant, _)| {
+                                                        participant.id == racer.participant.id
+                                                    })
+                                                {
+                                                    let input = edits
+                                                        .entry((race_index, participant.id))
+                                                        .or_insert_with(|| {
+                                                            placement.map_or_else(
+                                                                String::new,
+                                                                |value| {
+                                                                    value.placement().to_string()
+                                                                },
+                                                            )
+                                                        });
+                                                    ui.add_space(24.0);
+                                                    ui.scope(|ui| {
+                                                        if active_race_index == Some(race_index) {
+                                                            let visuals =
+                                                                &mut ui.visuals_mut().widgets;
+                                                            visuals.inactive.weak_bg_fill =
+                                                                egui::Color32::from_rgb(
+                                                                    0x35, 0x62, 0x3A,
+                                                                );
+                                                            visuals.inactive.bg_fill =
+                                                                visuals.inactive.weak_bg_fill;
+                                                            visuals.hovered.weak_bg_fill =
+                                                                ACTIVE_GREEN;
+                                                        }
+                                                        place_input(
+                                                            ui,
+                                                            (
+                                                                "gauntlet",
+                                                                race_index,
+                                                                participant.id,
+                                                            ),
+                                                            input,
+                                                            race.racers.len() as u8,
+                                                        );
+                                                    });
+                                                } else {
+                                                    ui.add_space(50.0);
+                                                    ui.label(
+                                                        egui::RichText::new("—").weak().size(18.0),
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    }
+                                    ui.end_row();
+                                }
+
+                                ui.add_sized([PLACE_WIDTH, FOOTER_HEIGHT], egui::Label::new(""));
+                                ui.add_sized([RACER_WIDTH, FOOTER_HEIGHT], egui::Label::new(""));
+                                ui.add_sized([LIVES_WIDTH, FOOTER_HEIGHT], egui::Label::new(""));
+                                for (race_index, race) in gauntlet.races.iter().enumerate() {
+                                    let racer_count = race.racers.len() as u8;
+                                    let ready = race.racers.iter().all(|(participant, _)| {
+                                        matches!(
+                                            edits
+                                                .get(&(race_index, participant.id))
+                                                .and_then(|value| value.trim().parse::<u8>().ok()),
+                                            Some(value) if (1..=racer_count).contains(&value)
+                                        )
+                                    });
+                                    let button_label = if race_index + 1 == gauntlet.races.len() {
+                                        "Advance"
+                                    } else {
+                                        "Update"
+                                    };
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(RACE_WIDTH, FOOTER_HEIGHT),
+                                        egui::Layout::top_down(egui::Align::Center),
+                                        |ui| {
+                                            ui.add_space(15.0);
+                                            if ui
+                                                .add_enabled(
+                                                    ready,
+                                                    egui::Button::new(
+                                                        egui::RichText::new(button_label)
+                                                            .color(egui::Color32::BLACK)
+                                                            .strong(),
+                                                    )
+                                                    .fill(
+                                                        if active_race_index == Some(race_index) {
+                                                            ACTIVE_GREEN_BRIGHT
+                                                        } else {
+                                                            AMBER
+                                                        },
+                                                    )
+                                                    .min_size([104.0, 34.0].into()),
+                                                )
+                                                .clicked()
+                                            {
+                                                let results = race
+                                                    .racers
+                                                    .iter()
+                                                    .map(|(participant, _)| {
+                                                        let placement = edits
+                                                            .get(&(race_index, participant.id))
+                                                            .and_then(|value| {
+                                                                value.trim().parse::<u8>().ok()
+                                                            })
+                                                            .and_then(|value| {
+                                                                Placement::new(value).ok()
+                                                            });
+                                                        (participant.id, placement)
+                                                    })
+                                                    .collect();
+                                                *action = Some(Action::UpdateGauntletRace(
+                                                    race_index, results,
+                                                ));
+                                            }
+                                        },
+                                    );
+                                }
+                                ui.end_row();
+                            });
+                    });
+                });
+        });
+
+    if gauntlet
+        .racers
+        .iter()
+        .all(|racer| racer.placement.is_some())
+    {
+        ui.add_space(16.0);
+        if ui
+            .add_sized(
+                [ui.available_width(), 44.0],
+                egui::Button::new(
+                    egui::RichText::new("Finish tournament")
+                        .color(egui::Color32::BLACK)
                         .strong()
                         .size(18.0),
-                );
-                ui.end_row();
-            }
-        });
+                )
+                .fill(ACTIVE_GREEN_BRIGHT),
+            )
+            .clicked()
+        {
+            *action = Some(Action::Next);
+        }
+    }
 }
 
 fn round_title(index: usize, round: &BracketRoundView, is_losers: bool) -> String {
@@ -1750,6 +2172,9 @@ fn describe_error(err: &TournamentError) -> String {
         }
         TournamentError::PoolsNotCompleted => {
             "Finish every pool race before advancing to the bracket.".to_owned()
+        }
+        TournamentError::GauntletNotCompleted => {
+            "Finish the gauntlet before completing the tournament.".to_owned()
         }
         TournamentError::RaceIsNotComplete => {
             "Enter a finishing place for every racer first.".to_owned()
@@ -2115,6 +2540,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "manual-validation")]
     #[test]
     fn skip_to_bracket_respects_the_configured_bracket_size() {
         let mut app = TournamentApp {
@@ -2136,5 +2562,20 @@ mod tests {
                 .sum::<usize>(),
             12
         );
+    }
+
+    #[cfg(feature = "manual-validation")]
+    #[test]
+    fn skip_to_gauntlet_prepares_the_first_race() {
+        let mut app = TournamentApp::default();
+
+        app.skip_to_gauntlet().unwrap();
+
+        let TournamentView::Gauntlet(gauntlet) = app.tournament.view() else {
+            panic!("shortcut did not reach the gauntlet");
+        };
+        assert_eq!(gauntlet.racers.len(), 8);
+        assert_eq!(gauntlet.races.len(), 1);
+        assert_eq!(gauntlet.races[0].racers.len(), 8);
     }
 }

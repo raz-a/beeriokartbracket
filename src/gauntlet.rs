@@ -114,6 +114,9 @@ impl Gauntlet {
                     racer.current_lives -= 1;
 
                     if racer.current_lives == 0 {
+                        // TODO: If multiple racers are eliminated, their placement is ordered
+                        // based on their finishing placement in the final race.
+
                         // Racer is out, give them a placement.
                         racer.placement = Some(current_place);
                         eliminated_players += 1;
@@ -136,6 +139,7 @@ impl Gauntlet {
                     .and_modify(|racer| racer.placement = Some(current_place));
 
                 assert!(self.is_complete());
+                self.races.truncate(index + 1);
 
                 return Ok(true);
             }
@@ -198,22 +202,215 @@ impl Viewable<GauntletView> for Gauntlet {
         let mut racers: Vec<_> = self
             .racers
             .iter()
-            .map(|(&id, racer)| GauntletRacerView {
-                participant: id.view(id_map),
-                lives: racer.current_lives,
-                placement: racer.placement,
+            .map(|(&id, racer)| {
+                (
+                    racer.starting_lives,
+                    GauntletRacerView {
+                        participant: id.view(id_map),
+                        lives: racer.current_lives,
+                        placement: racer.placement,
+                    },
+                )
             })
             .collect();
         racers.sort_by(|left, right| {
             right
-                .lives
-                .cmp(&left.lives)
-                .then_with(|| left.participant.name.cmp(&right.participant.name))
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.participant.name.cmp(&right.1.participant.name))
         });
+        let racers = racers.into_iter().map(|(_, racer)| racer).collect();
 
         GauntletView {
             racers,
             races: self.races.iter().map(|race| race.view(id_map)).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::participant::Participant;
+
+    fn make_racers(count: usize) -> (ParticipantMap, Vec<ParticipantId>) {
+        let mut participants = ParticipantMap::with_key();
+        let racers = (1..=count)
+            .map(|number| participants.insert(Participant::new(&format!("Player {number}"))))
+            .collect();
+        (participants, racers)
+    }
+
+    fn set_results(race: &mut Race, results: &[(ParticipantId, u8)]) {
+        for &(racer, placement) in results {
+            race.set_placement(racer, Some(Placement::new(placement).unwrap()))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn winners_start_with_twice_as_many_lives() {
+        let (_, racers) = make_racers(4);
+        let gauntlet = Gauntlet::new(
+            racers[..2].to_vec(),
+            racers[2..].to_vec(),
+            NonZero::new(3).unwrap(),
+        );
+
+        assert_eq!(gauntlet.racers[&racers[0]].current_lives, 6);
+        assert_eq!(gauntlet.racers[&racers[1]].current_lives, 6);
+        assert_eq!(gauntlet.racers[&racers[2]].current_lives, 3);
+        assert_eq!(gauntlet.racers[&racers[3]].current_lives, 3);
+    }
+
+    #[test]
+    fn configured_lives_determine_beerio_interval() {
+        let (participants, racers) = make_racers(2);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        assert!(matches!(
+            gauntlet.races[0].view(&participants).ruleset,
+            RaceRuleset::Vanilla
+        ));
+
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 1), (racers[1], 1)],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        assert!(matches!(
+            gauntlet.races[1].view(&participants).ruleset,
+            RaceRuleset::Beerio
+        ));
+    }
+
+    #[test]
+    fn last_survivor_is_crowned_the_winner() {
+        let (_, racers) = make_racers(2);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(1).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 1), (racers[1], 2)],
+        );
+
+        assert!(gauntlet.advance().unwrap());
+        assert_eq!(
+            gauntlet.racers[&racers[0]].placement,
+            Some(Placement::new(1).unwrap())
+        );
+        assert_eq!(
+            gauntlet.racers[&racers[1]].placement,
+            Some(Placement::new(2).unwrap())
+        );
+    }
+
+    #[test]
+    fn correction_that_finishes_earlier_truncates_later_races() {
+        let (_, racers) = make_racers(3);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 1), (racers[1], 2), (racers[2], 3)],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 3), (racers[1], 1), (racers[2], 2)],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        assert_eq!(gauntlet.races.len(), 3);
+
+        set_results(
+            gauntlet.race_by_id(0).unwrap(),
+            &[(racers[0], 2), (racers[1], 1), (racers[2], 3)],
+        );
+
+        assert!(gauntlet.advance().unwrap());
+        assert_eq!(gauntlet.races.len(), 2);
+    }
+
+    #[test]
+    fn correction_with_same_eliminations_preserves_later_races() {
+        let (_, racers) = make_racers(4);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[
+                (racers[0], 1),
+                (racers[1], 2),
+                (racers[2], 3),
+                (racers[3], 4),
+            ],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[
+                (racers[0], 3),
+                (racers[1], 4),
+                (racers[2], 1),
+                (racers[3], 2),
+            ],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[
+                (racers[0], 1),
+                (racers[1], 1),
+                (racers[2], 1),
+                (racers[3], 1),
+            ],
+        );
+        assert!(!gauntlet.advance().unwrap());
+        assert_eq!(gauntlet.races.len(), 4);
+
+        set_results(
+            gauntlet.race_by_id(0).unwrap(),
+            &[
+                (racers[0], 2),
+                (racers[1], 1),
+                (racers[2], 3),
+                (racers[3], 4),
+            ],
+        );
+
+        assert!(!gauntlet.advance().unwrap());
+        assert_eq!(gauntlet.races.len(), 4);
+        assert!(gauntlet.races[3].contains_racers(&racers));
+    }
+
+    #[test]
+    fn view_order_stays_stable_when_lives_change() {
+        let (participants, racers) = make_racers(2);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+        let initial_order: Vec<_> = gauntlet
+            .view(&participants)
+            .racers
+            .into_iter()
+            .map(|racer| racer.participant.id)
+            .collect();
+
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 2), (racers[1], 1)],
+        );
+        assert!(!gauntlet.advance().unwrap());
+
+        let updated_order: Vec<_> = gauntlet
+            .view(&participants)
+            .racers
+            .into_iter()
+            .map(|racer| racer.participant.id)
+            .collect();
+        assert_eq!(updated_order, initial_order);
     }
 }

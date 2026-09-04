@@ -56,6 +56,13 @@ impl Tournament {
         }
     }
 
+    fn gauntlet_mut(&mut self) -> Result<&mut Gauntlet, TournamentError> {
+        match &mut self.phase {
+            TournamentPhase::Gauntlet(gauntlet) => Ok(gauntlet),
+            _ => Err(TournamentError::WrongPhase),
+        }
+    }
+
     pub fn next_phase(&mut self) -> Result<(), TournamentError> {
         match &self.phase {
             TournamentPhase::Registration => {
@@ -101,7 +108,14 @@ impl Tournament {
 
                 Ok(())
             }
-            TournamentPhase::Gauntlet(_) => todo!(),
+            TournamentPhase::Gauntlet(gauntlet) => {
+                if !gauntlet.is_complete() {
+                    return Err(TournamentError::GauntletNotCompleted);
+                }
+
+                self.phase = TournamentPhase::_Complete;
+                Ok(())
+            }
             TournamentPhase::_Complete => todo!(),
         }
     }
@@ -205,7 +219,22 @@ impl Tournament {
         Ok(set.is_completed())
     }
 
-    // TODO: Add Gauntlet functions.
+    // Gauntlet Functions.
+    pub fn advance_gauntlet(&mut self) -> Result<bool, TournamentError> {
+        self.gauntlet_mut()?.advance()
+    }
+
+    pub fn update_gauntlet_race(
+        &mut self,
+        race_index: usize,
+        results: Vec<(ParticipantId, Option<Placement>)>,
+    ) -> Result<bool, TournamentError> {
+        let race = self
+            .gauntlet_mut()?
+            .race_by_id(race_index)
+            .ok_or(TournamentError::RaceNotFound)?;
+        Self::update_race(race, results)
+    }
 }
 
 impl Viewable<TournamentView> for Tournament {
@@ -239,7 +268,42 @@ impl Viewable<TournamentView> for Tournament {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZero;
+
     use super::*;
+
+    #[test]
+    fn gauntlet_facade_runs_race_and_completes_tournament() {
+        let mut tournament = Tournament::default();
+        let racers: Vec<_> = (1..=2)
+            .map(|number| {
+                tournament
+                    .participants
+                    .insert(Participant::new(&format!("Player {number}")))
+            })
+            .collect();
+        tournament.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
+            vec![],
+            racers.clone(),
+            NonZero::new(1).unwrap(),
+        )));
+
+        assert!(!tournament.advance_gauntlet().unwrap());
+        assert_eq!(
+            tournament.update_gauntlet_race(
+                0,
+                vec![
+                    (racers[0], Some(Placement::new(1).unwrap())),
+                    (racers[1], Some(Placement::new(2).unwrap())),
+                ],
+            ),
+            Ok(true)
+        );
+        assert!(tournament.advance_gauntlet().unwrap());
+
+        tournament.next_phase().unwrap();
+        assert!(matches!(tournament.view(), TournamentView::Complete));
+    }
 
     #[test]
     fn completed_bracket_advances_finalists_to_gauntlet() {

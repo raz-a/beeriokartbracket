@@ -95,14 +95,21 @@ impl Gauntlet {
                 break;
             }
 
-            let results = race
+            let mut results: Vec<_> = race
                 .get_racers_and_placements()
                 .iter()
-                .map(|&(id, place)| (id, place.unwrap()));
+                .map(|&(id, place)| (id, place.unwrap()))
+                .collect();
 
+            results.sort_by_key(|(_, a)| std::cmp::Reverse(a.placement()));
             let cutoff_placement = (results.len() / 2) as u8;
 
-            let mut eliminated_players = 0;
+            let has_survivor = results.iter().any(|(id, place)| {
+                place.placement() <= cutoff_placement || self.racers[id].current_lives > 1
+            });
+            if !has_survivor {
+                return Err(TournamentError::GauntletHasNoSurvivor);
+            }
 
             // Subtract lives based on placement.
             for (id, place) in results {
@@ -110,25 +117,20 @@ impl Gauntlet {
                     continue;
                 }
 
-                self.racers.entry(id).and_modify(|racer| {
-                    racer.current_lives -= 1;
+                let racer = self
+                    .racers
+                    .get_mut(&id)
+                    .ok_or(TournamentError::RacerNotInRace)?;
 
-                    if racer.current_lives == 0 {
-                        // TODO: If multiple racers are eliminated, their placement is ordered
-                        // based on their finishing placement in the final race.
+                racer.current_lives -= 1;
 
-                        // Racer is out, give them a placement.
-                        racer.placement = Some(current_place);
-                        eliminated_players += 1;
-                    }
-                });
-            }
-
-            // Update current place based on eliminations.
-            for _ in 0..eliminated_players {
-                current_place = current_place
-                    .move_up()
-                    .ok_or(TournamentError::ResultsDontMatchRace)?;
+                if racer.current_lives == 0 {
+                    // Racer is out, give them a placement.
+                    racer.placement = Some(current_place);
+                    current_place = current_place
+                        .move_up()
+                        .ok_or(TournamentError::ResultsDontMatchRace)?;
+                }
             }
 
             // If current place is first, then we have only one survivor. Crown them as the winner.
@@ -305,6 +307,25 @@ mod tests {
             gauntlet.racers[&racers[1]].placement,
             Some(Placement::new(2).unwrap())
         );
+    }
+
+    #[test]
+    fn eliminating_every_survivor_returns_an_error() {
+        let (_, racers) = make_racers(2);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(1).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        set_results(
+            gauntlet.active_race().unwrap(),
+            &[(racers[0], 2), (racers[1], 2)],
+        );
+
+        assert_eq!(
+            gauntlet.advance(),
+            Err(TournamentError::GauntletHasNoSurvivor)
+        );
+        assert!(!gauntlet.is_complete());
+        assert_eq!(gauntlet.surviving_racers().len(), 2);
     }
 
     #[test]

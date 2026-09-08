@@ -21,4 +21,5 @@ pub enum TournamentError {
     InvalidBracketFormat,
     BracketNotCompleted,
     GauntletNotCompleted,
+    GauntletHasNoSurvivor,
 }

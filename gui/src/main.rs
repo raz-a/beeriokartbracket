@@ -2176,6 +2176,10 @@ fn describe_error(err: &TournamentError) -> String {
         TournamentError::GauntletNotCompleted => {
             "Finish the gauntlet before completing the tournament.".to_owned()
         }
+        TournamentError::GauntletHasNoSurvivor => {
+            "These results would eliminate every remaining racer. Correct the placements so at least one racer survives."
+                .to_owned()
+        }
         TournamentError::RaceIsNotComplete => {
             "Enter a finishing place for every racer first.".to_owned()
         }

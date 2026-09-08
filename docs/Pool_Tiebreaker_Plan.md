@@ -1,14 +1,16 @@
-# Pool results & tiebreaker plan (next task)
+# Pool results & tiebreaker plan (superseded)
 
-Status: **planned, not yet implemented.** This is the next chunk of work on the
-pools stage. Captured here so it travels with the repo.
+Status: **superseded by the implemented count-back approach.** This document is
+retained as design history, not as planned work. The authoritative rule is in
+`docs/Rules_Brackets.md`.
 
-## Goal
+## Superseded proposal
 
-Turn the finished pool into a clean **top-16 cut**, running a secondary
-tiebreaker pool when the 16th/17th boundary is tied. The rules
-(`docs/Rules_Brackets.md`) say the top 16 total scores advance to the bracket and
-**ties are broken by an extra Vanilla race** — this is how we implement that.
+This proposal would have turned the finished pool into a clean **top-16 cut** by
+running a secondary tiebreaker pool when the 16th/17th boundary was tied. The
+implemented approach instead compares 1st-place finishes, then 2nd-place
+finishes, continuing through each placement before falling back to stable
+participant ID order.
 
 ## The flow
 

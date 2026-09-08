@@ -71,7 +71,7 @@ Each even bucket is played using the Beerio Kart ruleset, while odd buckets use 
 
 Pools races will continue until all players are in the "8 races" bucket.
 
-At the end of the pools races, the players with the **16** highest scores will advance to the bracket. Any ties will be resolved with an additional race using the Vanilla ruleset.
+At the end of the pools races, the players with the **16** highest scores will advance to the bracket. A tie at the qualification cutoff is resolved by count-back: compare the number of 1st-place finishes, then 2nd-place finishes, and continue through each placement until the tie is broken. If the racers have identical placement profiles, their stable participant IDs determine the order.
 
 ### 2. Bracket (16 racers)
 

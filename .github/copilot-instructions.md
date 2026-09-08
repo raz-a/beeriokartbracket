@@ -167,8 +167,10 @@ Not the generic "everyone plays X games" model — a specific bucket algorithm:
   placement, then move those racers up one bucket.
 - **Even buckets use Beerio, odd buckets use Vanilla.**
 - Continue until every racer is in the "8 races" bucket.
-- The **top 16 total scores** advance to the bracket. Ties are broken by an
-  extra **Vanilla** race.
+- The **top 16 total scores** advance to the bracket. A tie at the qualification
+  cutoff is resolved by count-back: compare 1st-place finishes, then 2nd-place
+  finishes, continuing through each placement. Identical profiles fall back to
+  stable participant ID order.
 
 ### Bracket (16 racers, double elimination)
 

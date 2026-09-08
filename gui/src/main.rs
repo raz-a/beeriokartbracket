@@ -1415,8 +1415,17 @@ impl TournamentApp {
                                 ),
                             );
                             for (r, race) in set.races.iter().enumerate() {
-                                let participant = &race.racers[row].0;
-                                let existing = race.racers[row].1;
+                                let racer = race
+                                    .racers
+                                    .iter()
+                                    .find(|(participant, _)| participant.id == set.racers[row].id);
+                                let Some((participant, existing)) = racer else {
+                                    ui.add_sized(
+                                        [BRACKET_GRID_COL_W, 26.0],
+                                        egui::Label::new(egui::RichText::new("-").weak()),
+                                    );
+                                    continue;
+                                };
                                 let buf = self
                                     .bracket_edits
                                     .entry((set_id, r, participant.id))
@@ -1424,27 +1433,28 @@ impl TournamentApp {
                                         existing
                                             .map_or(String::new(), |p| p.placement().to_string())
                                     });
-                                if r == current {
-                                    ui.scope(|ui| {
+                                let (cell, _) = ui.allocate_exact_size(
+                                    egui::vec2(BRACKET_GRID_COL_W, 26.0),
+                                    egui::Sense::hover(),
+                                );
+                                let input = egui::Rect::from_center_size(
+                                    cell.center(),
+                                    egui::vec2(BRACKET_PLACE_INPUT_W, 26.0),
+                                );
+                                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(input), |ui| {
+                                    if r == current {
                                         let v = ui.visuals_mut();
                                         v.widgets.inactive.weak_bg_fill = CURRENT_COL_TINT;
                                         v.widgets.inactive.bg_fill = CURRENT_COL_TINT;
                                         v.widgets.hovered.weak_bg_fill = CURRENT_COL_TINT;
-                                        place_input(
-                                            ui,
-                                            ("bracket", set_id, r, participant.id),
-                                            buf,
-                                            racer_count,
-                                        );
-                                    });
-                                } else {
+                                    }
                                     place_input(
                                         ui,
                                         ("bracket", set_id, r, participant.id),
                                         buf,
                                         racer_count,
                                     );
-                                }
+                                });
                             }
                         });
                     }
@@ -1487,6 +1497,7 @@ const BRACKET_ROW_GAP: f32 = 22.0;
 // Editable heat-grid metrics.
 const BRACKET_NAME_COL_W: f32 = 180.0;
 const BRACKET_GRID_COL_W: f32 = 80.0;
+const BRACKET_PLACE_INPUT_W: f32 = 64.0;
 const BRACKET_GRID_TITLE_H: f32 = 24.0;
 const BRACKET_GRID_HEAD_H: f32 = 22.0;
 const BRACKET_GRID_ROW_H: f32 = 30.0;
@@ -2185,6 +2196,10 @@ fn describe_error(err: &TournamentError) -> String {
         }
         TournamentError::ResultsDontMatchRace => {
             "The submitted results don't match the racers in this race.".to_owned()
+        }
+        TournamentError::BracketTiebreakUnresolved => {
+            "The Vanilla tiebreak race is still tied at the advancement cutoff. Correct the placements before continuing."
+                .to_owned()
         }
         TournamentError::InvalidPlacementValue => {
             "A finishing place is out of the valid range.".to_owned()

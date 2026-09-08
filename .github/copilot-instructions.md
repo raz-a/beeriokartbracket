@@ -179,7 +179,9 @@ Not the generic "everyone plays X games" model — a specific bucket algorithm:
   accumulate across all three — this is the "round = one or more races" concept.
 - **Top 4 of the 8** in a heat advance. The other 4 drop to the losers' bracket
   (from a winners' heat) or are eliminated (from a losers' heat).
-- A tie after 3 races is broken by a 4th **Vanilla** race.
+- Racers tied across the cutoff after 3 races compete in a 4th **Vanilla** race
+  for the open advancing places. A tie across that race's cutoff must be
+  corrected before the bracket continues.
 - Runs until **4 racers remain in each of the winners' and losers' brackets** (8
   total), who feed the Grand Finals Gauntlet.
 

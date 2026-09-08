@@ -20,6 +20,7 @@ pub enum TournamentError {
     BracketNotReady,
     InvalidBracketFormat,
     BracketNotCompleted,
+    BracketTiebreakUnresolved,
     GauntletNotCompleted,
     GauntletHasNoSurvivor,
 }

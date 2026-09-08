@@ -5,7 +5,7 @@ use slotmap::{SlotMap, new_key_type};
 use crate::participant::{ParticipantMap, ParticipantView};
 use crate::view::Viewable;
 use crate::{
-    ParticipantId, RaceRuleset, TournamentError,
+    ParticipantId, Placement, RaceRuleset, TournamentError,
     race::{MAX_RACERS, Race, RaceView},
     race_group::RaceGroupTracker,
 };
@@ -27,8 +27,23 @@ pub(crate) struct Feeder {
 #[derive(Debug)]
 pub(crate) struct BracketSet {
     races: Vec<Race>,
+    resolution: Option<BracketResolution>,
     expected_size: usize,
     feeders: Vec<Feeder>,
+}
+
+#[derive(Debug)]
+enum BracketResolution {
+    Decided {
+        winners: Vec<ParticipantId>,
+        losers: Vec<ParticipantId>,
+    },
+    Tiebreak {
+        race: Race,
+        open_seats: usize,
+        locked_winners: Vec<ParticipantId>,
+        locked_losers: Vec<ParticipantId>,
+    },
 }
 
 impl BracketSet {
@@ -58,6 +73,7 @@ impl BracketSet {
 
         Ok(Self {
             races,
+            resolution: None,
             expected_size: racer_count,
             feeders,
         })
@@ -76,7 +92,17 @@ impl BracketSet {
     }
 
     pub(crate) fn is_completed(&self) -> bool {
-        self.is_ready() && self.races.iter().all(|race| race.is_complete())
+        if !self.is_ready() || !self.races.iter().all(|race| race.is_complete()) {
+            return false;
+        }
+
+        match &self.resolution {
+            Some(BracketResolution::Decided { .. }) => true,
+            Some(BracketResolution::Tiebreak {
+                race, open_seats, ..
+            }) => Self::tiebreaker_is_resolved(race, *open_seats),
+            None => false,
+        }
     }
 
     fn is_ready(&self) -> bool {
@@ -101,6 +127,7 @@ impl BracketSet {
         for race in self.races.iter_mut() {
             race.clear_racers()
         }
+        self.resolution = None;
     }
 
     fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
@@ -108,14 +135,40 @@ impl BracketSet {
     }
 
     fn current_race_index(&self) -> usize {
-        self.races
+        let completed_regulation_races = self
+            .races
             .iter()
             .take_while(|race| race.is_complete())
-            .count()
+            .count();
+
+        let tiebreaker_resolved = matches!(
+            &self.resolution,
+            Some(BracketResolution::Tiebreak {
+                race,
+                open_seats,
+                ..
+            }) if Self::tiebreaker_is_resolved(race, *open_seats)
+        );
+
+        if completed_regulation_races == self.races.len() && tiebreaker_resolved {
+            completed_regulation_races + 1
+        } else {
+            completed_regulation_races
+        }
     }
 
     pub(crate) fn race(&mut self, index: usize) -> Option<&mut Race> {
-        self.races.get_mut(index)
+        if index < self.races.len() {
+            self.resolution = None;
+            self.races.get_mut(index)
+        } else if index == self.races.len() {
+            match &mut self.resolution {
+                Some(BracketResolution::Tiebreak { race, .. }) => Some(race),
+                _ => None,
+            }
+        } else {
+            None
+        }
     }
 
     fn get_scores(&self) -> Vec<(ParticipantId, usize)> {
@@ -138,27 +191,114 @@ impl BracketSet {
             .collect()
     }
 
-    fn get_winners_losers(&self, winner_count: usize) -> (Vec<ParticipantId>, Vec<ParticipantId>) {
+    fn resolve_regulation(&self, winner_count: usize) -> Option<BracketResolution> {
+        let mut scores = self.get_scores();
+        scores.sort_by(|(_, score_a), (_, score_b)| score_b.cmp(score_a));
+
+        let cutoff_score = scores.get(winner_count.checked_sub(1)?)?.1;
+        let mut locked_winners = Vec::new();
+        let mut contenders = Vec::new();
+        let mut locked_losers = Vec::new();
+
+        for (id, score) in scores {
+            match score.cmp(&cutoff_score) {
+                std::cmp::Ordering::Greater => locked_winners.push(id),
+                std::cmp::Ordering::Equal => contenders.push(id),
+                std::cmp::Ordering::Less => locked_losers.push(id),
+            }
+        }
+
+        let open_seats = winner_count - locked_winners.len();
+        if contenders.len() == open_seats {
+            locked_winners.extend(contenders);
+            Some(BracketResolution::Decided {
+                winners: locked_winners,
+                losers: locked_losers,
+            })
+        } else {
+            let mut race = Race::default();
+            race.set_ruleset(RaceRuleset::Vanilla);
+            race.add_racers(&contenders).ok()?;
+            Some(BracketResolution::Tiebreak {
+                race,
+                open_seats,
+                locked_winners,
+                locked_losers,
+            })
+        }
+    }
+
+    fn tiebreaker_is_resolved(race: &Race, open_seats: usize) -> bool {
+        if !race.is_complete() {
+            return false;
+        }
+
+        let mut placements: Vec<_> = race
+            .get_racers_and_placements()
+            .iter()
+            .map(|(_, placement)| placement.unwrap())
+            .collect();
+        placements.sort_by_key(Placement::placement);
+
+        placements[open_seats - 1] != placements[open_seats]
+    }
+
+    fn prepare_resolution(&mut self, winner_count: usize) -> Result<(), TournamentError> {
+        if !self.is_ready() || !self.races.iter().all(|race| race.is_complete()) {
+            self.resolution = None;
+            return Ok(());
+        }
+
+        if self.resolution.is_none() {
+            self.resolution = self.resolve_regulation(winner_count);
+        }
+
+        if matches!(
+            &self.resolution,
+            Some(BracketResolution::Tiebreak {
+                race,
+                open_seats,
+                ..
+            }) if race.is_complete() && !Self::tiebreaker_is_resolved(race, *open_seats)
+        ) {
+            return Err(TournamentError::BracketTiebreakUnresolved);
+        }
+
+        Ok(())
+    }
+
+    fn get_winners_losers(&self, _winner_count: usize) -> (Vec<ParticipantId>, Vec<ParticipantId>) {
         if !self.is_completed() {
             return (vec![], vec![]);
         }
 
-        let mut scores = self.get_scores();
-        scores.sort_by(|(_, score_a), (_, score_b)| score_b.cmp(score_a));
+        match self.resolution.as_ref().unwrap() {
+            BracketResolution::Decided { winners, losers } => (winners.clone(), losers.clone()),
+            BracketResolution::Tiebreak {
+                race,
+                open_seats,
+                locked_winners,
+                locked_losers,
+            } => {
+                let mut tiebreak_results: Vec<_> = race
+                    .get_racers_and_placements()
+                    .iter()
+                    .map(|(id, placement)| (*id, placement.unwrap()))
+                    .collect();
+                tiebreak_results.sort_by_key(|(_, placement)| placement.placement());
 
-        // TODO: if scores tie across the winner/loser boundary, run a Vanilla
-        // tiebreaker race instead of splitting the tie arbitrarily.
-        let mut scores = scores.into_iter();
+                let mut winners = locked_winners.clone();
+                winners.extend(tiebreak_results.iter().take(*open_seats).map(|(id, _)| *id));
 
-        let winners = scores
-            .by_ref()
-            .take(winner_count)
-            .map(|(id, _)| id)
-            .collect();
-
-        let losers = scores.map(|(id, _)| id).collect();
-
-        (winners, losers)
+                let mut losers: Vec<_> = tiebreak_results
+                    .iter()
+                    .skip(*open_seats)
+                    .map(|(id, _)| *id)
+                    .collect();
+                losers.extend(locked_losers);
+                (winners, losers)
+            }
+        }
     }
 }
 
@@ -248,6 +388,7 @@ impl Bracket {
             for set_idx in 0..self.winners[round_idx].sets.len() {
                 let id = self.winners[round_idx].sets[set_idx];
                 self.update_set(id)?;
+                self.bracket_sets[id].prepare_resolution(ADVANCERS_PER_SET)?;
             }
         }
 
@@ -256,6 +397,7 @@ impl Bracket {
             for set_idx in 0..self.losers[round_idx].sets.len() {
                 let id = self.losers[round_idx].sets[set_idx];
                 self.update_set(id)?;
+                self.bracket_sets[id].prepare_resolution(ADVANCERS_PER_SET)?;
             }
         }
 
@@ -574,7 +716,19 @@ impl Viewable<BracketSetView> for BracketSet {
         BracketSetView {
             expected_size: self.expected_size,
             racers,
-            races: self.races.iter().map(|race| race.view(id_map)).collect(),
+            races: self
+                .races
+                .iter()
+                .chain(
+                    self.resolution
+                        .iter()
+                        .filter_map(|resolution| match resolution {
+                            BracketResolution::Tiebreak { race, .. } => Some(race),
+                            BracketResolution::Decided { .. } => None,
+                        }),
+                )
+                .map(|race| race.view(id_map))
+                .collect(),
             feeders: Vec::new(),
             current_race_index: self.current_race_index(),
             is_ready: self.is_ready(),
@@ -664,6 +818,95 @@ mod tests {
         }
     }
 
+    fn complete_race(race: &mut Race, results: &[(ParticipantId, u8)]) {
+        for &(racer, placement) in results {
+            race.set_placement(racer, Some(Placement::new(placement).unwrap()))
+                .unwrap();
+        }
+    }
+
+    fn tiebreaker_race(set: &mut BracketSet) -> &mut Race {
+        match set.resolution.as_mut().unwrap() {
+            BracketResolution::Tiebreak { race, .. } => race,
+            BracketResolution::Decided { .. } => panic!("expected tiebreak resolution"),
+        }
+    }
+
+    fn set_with_cutoff_tie() -> (BracketSet, Vec<ParticipantId>) {
+        let racers = make_participants(8);
+        let mut set = BracketSet::new(1, racers.len(), vec![]).unwrap();
+        set.add_racers(&racers).unwrap();
+        complete_race(
+            &mut set.races[0],
+            &[
+                (racers[0], 1),
+                (racers[1], 2),
+                (racers[2], 3),
+                (racers[3], 4),
+                (racers[4], 4),
+                (racers[5], 6),
+                (racers[6], 7),
+                (racers[7], 8),
+            ],
+        );
+        (set, racers)
+    }
+
+    #[test]
+    fn cutoff_tie_creates_vanilla_race_for_contenders() {
+        let (mut set, racers) = set_with_cutoff_tie();
+
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+
+        let tiebreaker = tiebreaker_race(&mut set);
+        assert!(matches!(tiebreaker.ruleset(), RaceRuleset::Vanilla));
+        assert!(tiebreaker.contains_racers(&[racers[3], racers[4]]));
+        complete_race(tiebreaker, &[(racers[3], 2), (racers[4], 1)]);
+
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+        assert!(set.is_completed());
+        let (winners, losers) = set.get_winners_losers(ADVANCERS_PER_SET);
+        assert_eq!(winners, vec![racers[0], racers[1], racers[2], racers[4]]);
+        assert_eq!(losers[0], racers[3]);
+    }
+
+    #[test]
+    fn tied_tiebreak_race_returns_an_error() {
+        let (mut set, racers) = set_with_cutoff_tie();
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+        complete_race(tiebreaker_race(&mut set), &[(racers[3], 1), (racers[4], 1)]);
+
+        assert_eq!(
+            set.prepare_resolution(ADVANCERS_PER_SET),
+            Err(TournamentError::BracketTiebreakUnresolved)
+        );
+        assert!(!set.is_completed());
+        assert_eq!(set.current_race_index(), set.races.len());
+        assert_eq!(set.get_winners_losers(ADVANCERS_PER_SET), (vec![], vec![]));
+    }
+
+    #[test]
+    fn regulation_correction_removes_obsolete_tiebreak() {
+        let (mut set, racers) = set_with_cutoff_tie();
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+        assert!(matches!(
+            set.resolution,
+            Some(BracketResolution::Tiebreak { .. })
+        ));
+
+        set.race(0)
+            .unwrap()
+            .set_placement(racers[4], Some(Placement::new(5).unwrap()))
+            .unwrap();
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+
+        assert!(matches!(
+            set.resolution,
+            Some(BracketResolution::Decided { .. })
+        ));
+        assert!(set.is_completed());
+    }
+
     #[test]
     fn advance_routes_opening_heat_results_to_both_brackets() {
         let racers = make_participants(16);
@@ -704,11 +947,13 @@ mod tests {
 
         let last_losers_id = bracket.losers[1].sets[0];
         complete_set(&mut bracket.bracket_sets[last_losers_id]);
+        bracket.advance().unwrap();
         assert!(bracket.bracket_sets[last_losers_id].is_completed());
 
         // Swap an advancing racer with an eliminated racer in an opening heat.
         let corrected_set = &mut bracket.bracket_sets[opening_sets[0]];
-        for race in &mut corrected_set.races {
+        for race_index in 0..corrected_set.races.len() {
+            let race = corrected_set.race(race_index).unwrap();
             race.set_placement(racers[0], Some(Placement::new(5).unwrap()))
                 .unwrap();
             race.set_placement(racers[4], Some(Placement::new(1).unwrap()))

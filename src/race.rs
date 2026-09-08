@@ -70,6 +70,11 @@ impl Race {
         self.ruleset = ruleset;
     }
 
+    #[cfg(test)]
+    pub(crate) fn ruleset(&self) -> RaceRuleset {
+        self.ruleset
+    }
+
     pub fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
         if self.racers.len() + racers.len() > MAX_RACERS {
             return Err(TournamentError::RaceIsFull);

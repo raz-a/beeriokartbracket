@@ -82,7 +82,7 @@ The top 16 players from pools will participate in a **double elimination** brack
 
 The racers with the **Top 4** total scores will move on to the next round, while the remaining racers will either be placed in the losers' bracket (if this is a winners' bracket match) or be eliminated (if this is a losers' bracket match).
 
-> If there is a tie after the three races, a 4th race will be held using the Vanilla ruleset.
+> If racers are tied across the advancement cutoff after the three races, only those tied racers will compete in a 4th race using the Vanilla ruleset. The available advancing places will be awarded by their placements in that race. Tied placements across the cutoff are invalid and must be corrected before the bracket can continue.
 
 Brackets will continue until there are 4 players remaining in both the winners' and losers' brackets.
 

@@ -14,33 +14,44 @@ pub(crate) const MAX_RACERS: usize = 8;
 pub struct Placement(u8);
 
 impl Placement {
-    pub fn new(val: u8) -> Result<Self, TournamentError> {
-        if val == 0 || val > MAX_RACERS as u8 {
-            return Err(TournamentError::InvalidPlacementValue);
-        }
+    pub const DISQUALIFIED: Self = Self(u8::MAX);
 
-        Ok(Placement(val))
+    pub fn new(val: u8) -> Result<Self, TournamentError> {
+        if val != 0 && val <= MAX_RACERS as u8 {
+            Ok(Placement(val))
+        } else if val == Self::DISQUALIFIED.0 {
+            Ok(Self::DISQUALIFIED)
+        } else {
+            Err(TournamentError::InvalidPlacementValue)
+        }
     }
 
     pub fn points(&self) -> usize {
         // Points awarded are always relative to an 8 person race, even if the race has less than 8 people.
-        MAX_RACERS - self.placement_idx() as usize
+        self.placement_idx()
+            .map_or(0, |index| MAX_RACERS - index as usize)
     }
 
     pub fn placement(&self) -> u8 {
         self.0
     }
 
-    pub(crate) fn placement_idx(&self) -> u8 {
-        self.placement() - 1
+    pub(crate) fn placement_idx(&self) -> Option<u8> {
+        (!self.is_disqualified()).then(|| self.placement() - 1)
     }
 
     pub(crate) fn move_up(self) -> Option<Self> {
-        if self.placement_idx() == 0 {
-            None
-        } else {
-            Some(Placement(self.placement_idx()))
-        }
+        self.placement_idx()
+            .filter(|&index| index != 0)
+            .map(Placement)
+    }
+
+    pub fn is_disqualified(&self) -> bool {
+        *self == Self::DISQUALIFIED
+    }
+
+    pub(crate) fn is_valid_for_race(&self, racer_count: usize) -> bool {
+        self.is_disqualified() || self.placement() as usize <= racer_count
     }
 }
 
@@ -99,7 +110,7 @@ impl Race {
         place: Option<Placement>,
     ) -> Result<(), TournamentError> {
         if let Some(p) = place
-            && p.placement() > self.racers.len() as u8
+            && !p.is_valid_for_race(self.racers.len())
         {
             return Err(TournamentError::InvalidPlacementValue);
         }
@@ -134,6 +145,20 @@ impl Race {
         }
 
         set.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disqualified_has_no_points_or_numeric_index() {
+        let placement = Placement::DISQUALIFIED;
+
+        assert_eq!(placement.points(), 0);
+        assert_eq!(placement.placement_idx(), None);
+        assert!(placement.is_valid_for_race(2));
     }
 }
 

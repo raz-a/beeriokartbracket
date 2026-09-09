@@ -229,8 +229,10 @@ impl Pool {
             for (racer, placement) in race.get_racers_and_placements() {
                 let placement = placement.expect("Race is complete so placement is valid");
 
-                if let Some(entry) = countback_profile.get_mut(racer) {
-                    entry[placement.placement_idx() as usize] += 1;
+                if let (Some(entry), Some(index)) =
+                    (countback_profile.get_mut(racer), placement.placement_idx())
+                {
+                    entry[index as usize] += 1;
                 }
             }
         }

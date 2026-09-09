@@ -469,11 +469,8 @@ impl TournamentApp {
 
                                     // Ties are allowed; just need every racer to have a place chosen.
                                     let ready = race.racers.iter().all(|(participant, _)| {
-                                        matches!(
-                                            self.placement_inputs
-                                                .get(&participant.id)
-                                                .and_then(|s| s.trim().parse::<u8>().ok()),
-                                            Some(v) if (1..=racer_count).contains(&v)
+                                        self.placement_inputs.get(&participant.id).is_some_and(
+                                            |value| valid_placement_input(value, racer_count),
                                         )
                                     });
 
@@ -494,8 +491,7 @@ impl TournamentApp {
                                                     let place = self
                                                         .placement_inputs
                                                         .get(&participant.id)
-                                                        .and_then(|s| s.trim().parse::<u8>().ok())
-                                                        .and_then(|v| Placement::new(v).ok());
+                                                        .and_then(|value| parse_placement(value));
                                                     (participant.id, place)
                                                 })
                                                 .collect();
@@ -711,7 +707,7 @@ impl TournamentApp {
                                 self.race_edits
                                     .entry((id, participant.id))
                                     .or_insert_with(|| match place {
-                                        Some(p) => p.placement().to_string(),
+                                        Some(p) => placement_input_value(*p),
                                         None => String::new(),
                                     });
                             race_row(
@@ -727,12 +723,9 @@ impl TournamentApp {
 
                     // Ties are allowed; just need every racer to have a place chosen.
                     let ready = race.racers.iter().all(|(participant, _)| {
-                        matches!(
-                            self.race_edits
-                                .get(&(id, participant.id))
-                                .and_then(|s| s.trim().parse::<u8>().ok()),
-                            Some(v) if (1..=racer_count).contains(&v)
-                        )
+                        self.race_edits
+                            .get(&(id, participant.id))
+                            .is_some_and(|value| valid_placement_input(value, racer_count))
                     });
 
                     if ui.add_enabled(ready, egui::Button::new("Save")).clicked() {
@@ -743,8 +736,7 @@ impl TournamentApp {
                                 let place = self
                                     .race_edits
                                     .get(&(id, participant.id))
-                                    .and_then(|s| s.trim().parse::<u8>().ok())
-                                    .and_then(|v| Placement::new(v).ok());
+                                    .and_then(|value| parse_placement(value));
                                 (participant.id, place)
                             })
                             .collect();
@@ -896,7 +888,7 @@ impl TournamentApp {
                     if let Some(placement) = placement {
                         self.bracket_edits.insert(
                             (*set_id, race_index, participant.id),
-                            placement.placement().to_string(),
+                            placement_input_value(*placement),
                         );
                     }
                 }
@@ -916,7 +908,7 @@ impl TournamentApp {
                 if let Some(placement) = placement {
                     self.gauntlet_edits.insert(
                         (race_index, participant.id),
-                        placement.placement().to_string(),
+                        placement_input_value(*placement),
                     );
                 }
             }
@@ -1430,8 +1422,7 @@ impl TournamentApp {
                                     .bracket_edits
                                     .entry((set_id, r, participant.id))
                                     .or_insert_with(|| {
-                                        existing
-                                            .map_or(String::new(), |p| p.placement().to_string())
+                                        existing.map_or(String::new(), placement_input_value)
                                     });
                                 let (cell, _) = ui.allocate_exact_size(
                                     egui::vec2(BRACKET_GRID_COL_W, 26.0),
@@ -1469,8 +1460,7 @@ impl TournamentApp {
                                 let entered = self
                                     .bracket_edits
                                     .get(&(set_id, r, participant.id))
-                                    .and_then(|s| s.trim().parse::<u8>().ok())
-                                    .and_then(|v| Placement::new(v).ok());
+                                    .and_then(|value| parse_placement(value));
                                 if entered != *existing {
                                     differs = true;
                                 }
@@ -1865,9 +1855,7 @@ fn gauntlet_ui(
                                                         .or_insert_with(|| {
                                                             placement.map_or_else(
                                                                 String::new,
-                                                                |value| {
-                                                                    value.placement().to_string()
-                                                                },
+                                                                placement_input_value,
                                                             )
                                                         });
                                                     ui.add_space(24.0);
@@ -1913,11 +1901,8 @@ fn gauntlet_ui(
                                 for (race_index, race) in gauntlet.races.iter().enumerate() {
                                     let racer_count = race.racers.len() as u8;
                                     let ready = race.racers.iter().all(|(participant, _)| {
-                                        matches!(
-                                            edits
-                                                .get(&(race_index, participant.id))
-                                                .and_then(|value| value.trim().parse::<u8>().ok()),
-                                            Some(value) if (1..=racer_count).contains(&value)
+                                        edits.get(&(race_index, participant.id)).is_some_and(
+                                            |value| valid_placement_input(value, racer_count),
                                         )
                                     });
                                     let button_label = if race_index + 1 == gauntlet.races.len() {
@@ -1956,10 +1941,7 @@ fn gauntlet_ui(
                                                         let placement = edits
                                                             .get(&(race_index, participant.id))
                                                             .and_then(|value| {
-                                                                value.trim().parse::<u8>().ok()
-                                                            })
-                                                            .and_then(|value| {
-                                                                Placement::new(value).ok()
+                                                                parse_placement(value)
                                                             });
                                                         (participant.id, placement)
                                                     })
@@ -2288,20 +2270,58 @@ fn ordinal(n: u8) -> String {
     format!("{n}{suffix}")
 }
 
-/// A place entry: an ordinal dropdown of `1..=count`, stored as a number in `buf`.
+fn parse_placement(value: &str) -> Option<Placement> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("DQ") || value.eq_ignore_ascii_case("Disqualified") {
+        Some(Placement::DISQUALIFIED)
+    } else {
+        value
+            .parse::<u8>()
+            .ok()
+            .and_then(|value| Placement::new(value).ok())
+    }
+}
+
+fn placement_input_value(placement: Placement) -> String {
+    if placement.is_disqualified() {
+        "DQ".to_owned()
+    } else {
+        placement.placement().to_string()
+    }
+}
+
+fn placement_label(placement: Placement) -> String {
+    if placement.is_disqualified() {
+        "DQ".to_owned()
+    } else {
+        ordinal(placement.placement())
+    }
+}
+
+fn valid_placement_input(value: &str, racer_count: u8) -> bool {
+    parse_placement(value).is_some_and(|placement| {
+        placement.is_disqualified() || placement.placement() <= racer_count
+    })
+}
+
+/// A place entry: an ordinal or disqualification dropdown, stored as text in `buf`.
 fn place_input(ui: &mut egui::Ui, id_source: impl std::hash::Hash, buf: &mut String, count: u8) {
-    let current = buf.trim().parse::<u8>().ok();
-    let mut selected = current.unwrap_or(0);
+    let current = parse_placement(buf);
+    let mut selected = current;
     egui::ComboBox::from_id_salt(id_source)
-        .selected_text(current.map_or("—".to_owned(), ordinal))
+        .selected_text(current.map_or("—".to_owned(), placement_label))
         .width(64.0)
         .show_ui(ui, |ui| {
             for place in 1..=count {
-                ui.selectable_value(&mut selected, place, ordinal(place));
+                let placement = Placement::new(place).expect("dropdown placements are valid");
+                ui.selectable_value(&mut selected, Some(placement), ordinal(place));
             }
+            ui.selectable_value(&mut selected, Some(Placement::DISQUALIFIED), "DQ");
         });
-    if selected != 0 && Some(selected) != current {
-        *buf = selected.to_string();
+    if selected != current
+        && let Some(placement) = selected
+    {
+        *buf = placement_input_value(placement);
     }
 }
 

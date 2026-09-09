@@ -189,7 +189,7 @@ impl Tournament {
 
         for (_, p) in results.iter() {
             if let Some(p) = p
-                && p.placement() as usize > results.len()
+                && !p.is_valid_for_race(results.len())
             {
                 return Err(TournamentError::InvalidPlacementValue);
             }

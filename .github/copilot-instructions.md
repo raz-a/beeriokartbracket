@@ -9,17 +9,18 @@ a deliberate learning project. The official rules for the current event live in
 `docs/Rules_Brackets.md`; see "Tournament rules" below for the concrete format
 the tool must run.
 
-Current state: past the initial scaffold. The crate is split into a library
-(`src/lib.rs`, all domain logic) and a thin binary (`src/main.rs`) — see
-"Architecture (current)" below. `Cargo.toml` is edition 2024 and depends on
-`slotmap`. Implemented so far: the `Tournament` top-level type, a runtime
-`TournamentPhase` state machine (Registration → Pools → Bracket → Gauntlet →
-Complete), a
-`Registration` capability handle for phase-gated participant editing, and
-`Participant` (name + seed) stored in a `SlotMap` keyed by `ParticipantId`. Still
-**planned, not yet implemented**: races, pools, bracket/rounds, point
-distribution, tests, and the entire UI. A `#![allow(dead_code)]` (with a TODO) is
-in place while the model is incomplete.
+Current state: the end-to-end tournament flow is implemented. The workspace is
+split into the UI-independent `beeriokartbracket` library at the repository root
+and an `eframe`/`egui` binary in `gui/`. Implemented domain features include the
+runtime Registration → Pools → Bracket → Gauntlet → Complete state machine,
+participant registration, race scoring, pool buckets and count-back qualifying,
+the double-elimination bracket with tiebreaker races, the lives-based gauntlet,
+read-only view types, versioned JSON persistence, and unit tests throughout the
+domain. The GUI supports tournament setup, participant editing, placement entry
+for every competitive phase, phase advancement, and New/Open/Save/Rename file
+workflows. Remaining work is refinement rather than scaffolding; notable gaps
+include drag-and-drop bracket organization and the Beerio finish-before-drinking
+scoring override.
 
 ## How to work in this repo (read this first)
 
@@ -50,10 +51,11 @@ generator.
 Decisions already made and reflected in the code — build on these rather than
 re-deriving or second-guessing them:
 
-- **Library + thin binary.** All domain logic lives in the `beeriokartbracket`
-  library (`src/lib.rs`) and stays UI-independent so it is unit- and
-  integration-testable. `src/main.rs` is a thin shell that drives the library.
-  Any GUI toolkit belongs in the binary's dependencies, never the library's.
+- **Library + GUI workspace member.** All domain logic lives in the root
+  `beeriokartbracket` library (`src/`) and stays UI-independent so it is unit-
+  and integration-testable. The `gui/` workspace member owns the `eframe`/`egui`
+  application and filesystem dialogs. GUI dependencies belong there, never in
+  the library.
 - **ID handles over owning references.** Entities live in `slotmap` tables and
   are referenced elsewhere by generational key (e.g. `ParticipantId`), not by
   owned values or `Rc<RefCell<…>>`. This is the "handle table" model: one source
@@ -62,34 +64,48 @@ re-deriving or second-guessing them:
 - **Runtime phase state machine.** `TournamentPhase` is a runtime enum field on
   `Tournament`, deliberately *not* a compile-time typestate, because the
   tournament is a single stored/serializable value driven by user actions.
-- **Capability handles for phase-gated operations.** Rather than a phase check in
-  every method, `Tournament` hands out a borrow-scoped handle (e.g.
-  `registration() -> Option<Registration<'_>>`) that only exists in the
-  correct phase, so the check lives in one place. Transitions consume the handle
-  (`Registration::start(self)`) so using it after a transition is a compile
-  error.
+- **Centralized runtime phase guards.** Public mutations return
+  `Result<_, TournamentError>`. Private helpers such as `ensure_registration()`,
+  `pools_mut()`, and `bracket_mut()` centralize phase checks and report
+  `TournamentError::WrongPhase`; `next_phase()` owns validated transitions.
+- **Views separate reads from writes.** The library exposes `TournamentView` and
+  phase-specific view types through `Viewable`, while mutation stays on
+  `Tournament`. Preserve this UI-independent presentation boundary.
+- **Validated, versioned persistence.** `serialize_tournament()` and
+  `deserialize_tournament()` use a versioned JSON envelope. Deserialization
+  validates IDs and internal phase state before returning a tournament; keep
+  persistence migrations and validation in the library.
 
-## Domain model (planned)
+## Domain model (current)
 
 The core logic should be UI-independent and thoroughly unit-testable. Key concepts:
 
-- **Participant** — added/removed by the user; has a **seed** value used for
-  bracket placement.
-- **Race size categories** — Mario Kart races are treated as one of three sizes:
-  **8-player, 4-player, or 2-player**. Actual head counts that don't match
-  exactly are bucketed into the nearest category (e.g. 6 players → 8-player
-  category, 3 → 4-player category).
-- **Round** — a unit of competition made of **one or more races**. Points and
-  placements are accumulated across all races in the round. For a bracket round,
-  the **top half advances and the bottom half drops**, where "half" is by the
-  race-size *category*, not the literal player count.
-- **Point distribution** — configurable points awarded per placement, aggregated
-  across the races in a round to determine round placement. The concrete v1
-  default (8-player race) is 8 points for 1st down to 1 for 8th; see "Tournament
-  rules".
+- **Participant** — a name stored in a `SlotMap` and referenced by
+  `ParticipantId`. Participants do not have individual seeds. `Config.seed` is a
+  reproducible RNG seed used when shuffling tournament groups.
+- **Config** — owns pool-round count, bracket size, races per bracket heat,
+  losers'-side gauntlet lives, and RNG seed. Defaults match the concrete event:
+  8 pool rounds, 16 qualifiers, 3 races per heat, and 3 losers' lives (winners
+  receive twice this value).
+- **Race** — up to 8 participant IDs with optional validated placements and a
+  `RaceRuleset`. Points are currently derived from placement as 8 down to 1;
+  disqualification maps to last place.
+- **Race groups** — `RaceGroupTracker` divides a participant count into workable
+  groups. Pools and bracket stages apply phase-specific minimum group sizes
+  rather than a general-purpose 8/4/2 category enum.
+- **Pools** — filling/draining buckets track races completed. The lowest active
+  bucket supplies each race, rulesets alternate by bucket, and aggregate scores
+  plus count-back placement profiles select the configured bracket field.
+- **Bracket** — a double-elimination graph of `BracketSet`s and feeder sources.
+  Each set aggregates a configured number of races; unresolved cutoff ties spawn
+  a Vanilla tiebreaker race.
+- **Gauntlet** — winners start with twice `Config.gauntlet_lives`, losers with
+  the configured value. Bottom-half finishers lose a life, and racing continues
+  until placements are resolved. The Beerio interval currently reuses the same
+  config value (3 by default), a coupling to preserve or separate deliberately.
 - **Ruleset** — a per-race axis orthogonal to race size: **Vanilla** or **Beerio
-  Kart**. Only Beerio's finish-before-you-drink penalty affects scoring; see
-  "Tournament rules".
+  Kart**. Rulesets are scheduled, but the Beerio finish-before-you-drink penalty
+  is not yet represented in race results.
 
 ### Initial version (v1) assumptions
 
@@ -98,37 +114,18 @@ deliberately hard-codes the simplifications below.** Treat them as invariants fo
 now, but keep the code structured so each can be relaxed later without a rewrite
 (e.g. don't scatter the literal `8` everywhere — funnel it through one place).
 
-1. **Race sizes are fixed.** Every non-bracket-endgame race is an **8-player**
-   race; the general 8/4/2 bucketing described above is not exercised in v1. The
-   bracket's endgame is **not** a single 4-player final — it is the lives-based
-   **Grand Finals Gauntlet** exactly as specified in `docs/Rules_Brackets.md`
-   (see "Tournament rules").
+1. **Race grouping is phase-specific.** Pool races are formed as 6-, 7-, or
+  8-player groups where possible. Bracket grouping has separate winners' and
+  losers' minimums. The broader 8/4/2 category abstraction is not implemented.
 2. **Brackets are always double elimination.** Single elimination is not
    selectable in v1 (bottom half always drops into the losers' bracket).
 3. **Phases are fixed and linear:** Registration → Pools → Bracket → Gauntlet →
    Complete. Every tournament advances through all five, in that order.
 
-These v1 simplifications predate `docs/Rules_Brackets.md`. Where the concrete
-rules go beyond a simplification (the pools bucket qualifier, 6–8-player pool
-races), treat the rules doc as authoritative and confirm with the maintainer how
-much of it v1 should actually implement. The **Grand Finals Gauntlet** is not
-optional — it is the correct, intended bracket endgame.
-
-### Tournament formats
-
-- **Single elimination** — bottom half of each round is eliminated.
-- **Double elimination** — bottom half drops into a **losers' bracket** instead
-  of being eliminated.
-- **Pools** — participants are randomly shuffled to play **X games**, facing
-  different opponents each game. After every participant has played X games,
-  those who meet a **point threshold** (or the top N needed to fill the bracket)
-  advance to the bracket stage.
-
-**Bracket generation** is driven by the participant count and their seeds.
-
-Model these formats and stages so they compose (e.g. a pools stage feeding a
-single- or double-elimination bracket). Rust enums + pattern matching are a
-natural fit; discuss the state-machine shape before locking in a data model.
+These v1 constraints predate `docs/Rules_Brackets.md`. Treat the rules doc as
+authoritative and surface any implementation mismatch rather than silently
+changing either behavior or requirements. The **Grand Finals Gauntlet** is the
+required bracket endgame, not a conventional four-player final.
 
 ## Tournament rules (authoritative: docs/Rules_Brackets.md)
 
@@ -197,19 +194,19 @@ A lives-based elimination, not a single 4-player final:
 - **Every 3rd race uses Beerio**; the rest are Vanilla.
 - Continues until **one racer remains** (the champion).
 
-## UI (planned, framework not yet chosen)
+## UI (current)
 
-The UI must let a user:
+The GUI is an `eframe`/`egui` native application in `gui/`. It supports creating
+and reopening tournament files, autosaving and renaming sessions, editing the
+configuration during registration, adding/removing participants, entering or
+correcting race placements, viewing standings and bracket progress, and moving
+through every tournament phase. A `manual-validation` Cargo feature exposes
+development controls for exercising later phases.
 
-- add/remove participants,
-- assign/edit seed values,
-- enter placements for the races/rounds,
-- **drag participants around** to organize the bracket layout.
-
-The GUI toolkit is an **open design decision** — do not assume one. Candidate
-Rust options worth weighing with the maintainer include `egui`/`eframe`, `iced`,
-and `dioxus`; drag-and-drop support and layout ergonomics should factor into the
-choice. Keep domain logic decoupled from whichever toolkit is picked.
+Keep GUI state and file-dialog concerns in `gui/`; expose new domain information
+through library view types. Drag-and-drop participant organization remains
+planned. Participant seed editing is not a current requirement because seeding
+uses the tournament-wide RNG seed in `Config`.
 
 ## Toolchain
 
@@ -226,7 +223,7 @@ Run from the repository root.
 - Test (all): `cargo test --workspace` (bare `cargo test` targets only the GUI;
   the domain tests live in the library).
 - Single test: `cargo test --workspace <test_name>` (substring match on the
-  test's path, e.g. `cargo test --workspace bracket::seeds_are_sorted`)
+  test's path)
 - Tests in one module: `cargo test --workspace <module_path>::`
 - Show test stdout: `cargo test --workspace -- --nocapture`
 - Lint: `cargo clippy --workspace --all-targets` (fail on warnings:
@@ -245,4 +242,4 @@ Run from the repository root.
 
 ## Git
 
-- Default branch is `master`. No remote is configured yet.
+- Default branch is `master`.

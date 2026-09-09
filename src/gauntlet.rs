@@ -327,6 +327,32 @@ mod tests {
     }
 
     #[test]
+    fn disqualified_racer_loses_a_life() {
+        let (_, racers) = make_racers(4);
+        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+
+        assert!(!gauntlet.advance().unwrap());
+        let race = gauntlet.active_race().unwrap();
+        set_results(
+            race,
+            &[
+                (racers[0], 1),
+                (racers[1], 2),
+                (racers[2], 3),
+                (racers[3], 4),
+            ],
+        );
+        race.set_placement(racers[3], Some(Placement::DISQUALIFIED))
+            .unwrap();
+
+        assert!(!gauntlet.advance().unwrap());
+        assert_eq!(gauntlet.racers[&racers[0]].current_lives, 2);
+        assert_eq!(gauntlet.racers[&racers[1]].current_lives, 2);
+        assert_eq!(gauntlet.racers[&racers[2]].current_lives, 1);
+        assert_eq!(gauntlet.racers[&racers[3]].current_lives, 1);
+    }
+
+    #[test]
     fn correction_that_finishes_earlier_truncates_later_races() {
         let (_, racers) = make_racers(3);
         let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());

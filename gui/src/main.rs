@@ -1350,7 +1350,7 @@ impl TournamentApp {
                     ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
                     ui.spacing_mut().interact_size = egui::vec2(52.0, 22.0);
 
-                    // The current round stays editable but is visually flagged.
+                    // Only the active heat's current race is visually flagged.
                     let current = set.current_race_index;
 
                     ui.label(
@@ -1381,10 +1381,10 @@ impl TournamentApp {
                                 RaceRuleset::Vanilla => "🏁",
                             };
                             let label = format!("R{} {}", r + 1, emoji);
-                            let text = if r == current {
+                            let text = if is_active && r == current {
                                 egui::RichText::new(label)
-                                    .color(egui::Color32::BLACK)
-                                    .background_color(AMBER_BRIGHT)
+                                    .color(ACTIVE_GREEN_BRIGHT)
+                                    .strong()
                                     .font(title_font(14.0))
                             } else {
                                 egui::RichText::new(label)
@@ -1433,11 +1433,14 @@ impl TournamentApp {
                                     egui::vec2(BRACKET_PLACE_INPUT_W, 26.0),
                                 );
                                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(input), |ui| {
-                                    if r == current {
+                                    if is_active && r == current {
                                         let v = ui.visuals_mut();
-                                        v.widgets.inactive.weak_bg_fill = CURRENT_COL_TINT;
-                                        v.widgets.inactive.bg_fill = CURRENT_COL_TINT;
-                                        v.widgets.hovered.weak_bg_fill = CURRENT_COL_TINT;
+                                        v.widgets.inactive.weak_bg_fill = CURRENT_RACE_TINT;
+                                        v.widgets.inactive.bg_fill = CURRENT_RACE_TINT;
+                                        v.widgets.inactive.bg_stroke =
+                                            egui::Stroke::new(1.5_f32, ACTIVE_GREEN_BRIGHT);
+                                        v.widgets.inactive.fg_stroke =
+                                            egui::Stroke::new(1.0_f32, CREAM);
                                     }
                                     place_input(
                                         ui,
@@ -1492,8 +1495,8 @@ const BRACKET_GRID_TITLE_H: f32 = 24.0;
 const BRACKET_GRID_HEAD_H: f32 = 22.0;
 const BRACKET_GRID_ROW_H: f32 = 30.0;
 const BRACKET_CARD_SAFETY_PAD: f32 = 16.0;
-// Fill behind the current round's place dropdowns.
-const CURRENT_COL_TINT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x6A, 0x24);
+// Quiet green fill for the active heat's current-race controls.
+const CURRENT_RACE_TINT: egui::Color32 = egui::Color32::from_rgb(0x35, 0x62, 0x3A);
 
 fn active_bracket_set(bracket: &BracketView) -> Option<(String, &BracketSetView)> {
     let active_id = bracket.active_set?;

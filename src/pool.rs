@@ -434,6 +434,34 @@ mod tests {
     }
 
     #[test]
+    fn disqualified_racers_score_zero_and_use_stable_id_at_cutoff() {
+        let ids = make_participants(3);
+        let (winner, first_dq, second_dq) = (ids[0], ids[1], ids[2]);
+        let mut race = Race::default();
+        race.add_racers(&ids).unwrap();
+        race.set_placement(winner, Some(Placement::new(1).unwrap()))
+            .unwrap();
+        race.set_placement(first_dq, Some(Placement::DISQUALIFIED))
+            .unwrap();
+        race.set_placement(second_dq, Some(Placement::DISQUALIFIED))
+            .unwrap();
+
+        let result = completed_pool(vec![race]).get_results(2).unwrap();
+
+        assert_eq!(id_set(&result.advanced), HashSet::from([winner, first_dq]));
+        assert_eq!(id_set(&result.eliminated), HashSet::from([second_dq]));
+        assert_eq!(
+            result
+                .advanced
+                .iter()
+                .find(|score| score.get_id() == first_dq)
+                .unwrap()
+                .get_score(),
+            0
+        );
+    }
+
+    #[test]
     fn pool_rejects_counts_that_cannot_form_legal_races() {
         // 10 racers can't be split into only 6/7/8-player races.
         assert!(RaceGroupTracker::new(10, MIN_POOL_RACE_SIZE).is_err());

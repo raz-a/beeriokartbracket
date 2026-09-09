@@ -865,6 +865,25 @@ mod tests {
     }
 
     #[test]
+    fn disqualified_racer_loses_bracket_tiebreak_cutoff() {
+        let (mut set, racers) = set_with_cutoff_tie();
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+
+        let tiebreaker = tiebreaker_race(&mut set);
+        tiebreaker
+            .set_placement(racers[3], Some(Placement::new(1).unwrap()))
+            .unwrap();
+        tiebreaker
+            .set_placement(racers[4], Some(Placement::DISQUALIFIED))
+            .unwrap();
+
+        set.prepare_resolution(ADVANCERS_PER_SET).unwrap();
+        let (winners, losers) = set.get_winners_losers(ADVANCERS_PER_SET);
+        assert!(winners.contains(&racers[3]));
+        assert!(losers.contains(&racers[4]));
+    }
+
+    #[test]
     fn tied_tiebreak_race_returns_an_error() {
         let (mut set, racers) = set_with_cutoff_tie();
         set.prepare_resolution(ADVANCERS_PER_SET).unwrap();

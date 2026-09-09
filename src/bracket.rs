@@ -18,13 +18,11 @@ pub enum FeederSource {
     Losers,
 }
 
-#[derive(Debug)]
-pub(crate) struct Feeder {
+struct Feeder {
     id: BracketSetId,
     source: FeederSource,
 }
 
-#[derive(Debug)]
 pub(crate) struct BracketSet {
     races: Vec<Race>,
     resolution: Option<BracketResolution>,
@@ -32,7 +30,6 @@ pub(crate) struct BracketSet {
     feeders: Vec<Feeder>,
 }
 
-#[derive(Debug)]
 enum BracketResolution {
     Decided {
         winners: Vec<ParticipantId>,
@@ -303,14 +300,12 @@ impl BracketSet {
 }
 
 /// How a losers-bracket round is fed.
-#[derive(Debug)]
 enum BracketRoundKind {
     Winners,
     LosersIntake { wb_round: usize },
     LosersConsolidate,
 }
 
-#[derive(Debug)]
 struct BracketRound {
     sets: Vec<BracketSetId>,
     kind: BracketRoundKind,
@@ -322,7 +317,6 @@ const MIN_LOSERS_BRACKET_RACE_SIZE: usize = 4;
 // Each heat advances its top 4 finishers.
 const ADVANCERS_PER_SET: usize = 4;
 
-#[derive(Debug)]
 pub(crate) struct Bracket {
     winners: Vec<BracketRound>,
     losers: Vec<BracketRound>,
@@ -1043,9 +1037,9 @@ mod tests {
 
     #[test]
     fn invalid_losers_heat_size_returns_an_error() {
-        assert_eq!(
-            Bracket::new(3, &make_participants(25)).unwrap_err(),
-            TournamentError::InvalidBracketSetSize
-        );
+        assert!(matches!(
+            Bracket::new(3, &make_participants(25)),
+            Err(TournamentError::InvalidBracketSetSize)
+        ));
     }
 }

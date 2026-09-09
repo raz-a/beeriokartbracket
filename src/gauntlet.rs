@@ -6,14 +6,12 @@ use crate::race::{Race, RaceView};
 use crate::view::Viewable;
 use crate::{Placement, RaceRuleset, TournamentError};
 
-#[derive(Debug)]
 struct GauntletRacer {
     starting_lives: usize,
     current_lives: usize,
     placement: Option<Placement>,
 }
 
-#[derive(Debug)]
 pub(crate) struct Gauntlet {
     racers: HashMap<ParticipantId, GauntletRacer>,
     races: Vec<Race>,
@@ -55,7 +53,7 @@ impl Gauntlet {
         }
     }
 
-    pub(crate) fn active_race(&mut self) -> Option<&mut Race> {
+    fn active_race(&mut self) -> Option<&mut Race> {
         self.races.last_mut()
     }
 

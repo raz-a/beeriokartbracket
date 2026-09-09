@@ -4,7 +4,6 @@ use crate::race::MAX_RACERS;
 /// Splits a set of participants into races whose sizes differ by at most one,
 /// so every race stays as full as the size bounds allow. Shared by the pool
 /// qualifier and the bracket, which pass different minimum race sizes.
-#[derive(Debug)]
 pub(crate) struct RaceGroupTracker {
     full_race_size: usize,
     full_race_count: usize,

@@ -19,7 +19,7 @@ use crate::view::Viewable;
 /// covered by `t` in `{7, 8}` are rejected.
 const MIN_POOL_RACE_SIZE: usize = 6;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct FillingBucket {
     participants: Vec<ParticipantId>,
 }
@@ -42,7 +42,6 @@ impl FillingBucket {
     }
 }
 
-#[derive(Debug)]
 struct DrainingBucket {
     participants: Vec<ParticipantId>,
     tracker: RaceGroupTracker,
@@ -65,23 +64,20 @@ impl DrainingBucket {
     }
 }
 
-#[derive(Debug)]
-pub struct PoolResult {
+pub(crate) struct PoolResult {
     advanced: Vec<ParticipantScore>,
     eliminated: Vec<ParticipantScore>,
 }
 
 impl PoolResult {
     /// The advancing racers' ids, in the pool's finishing order.
-    pub fn advanced_ids(&self) -> Vec<ParticipantId> {
+    pub(crate) fn advanced_ids(&self) -> Vec<ParticipantId> {
         self.advanced.iter().map(|score| score.get_id()).collect()
     }
 }
 
-#[derive(Debug)]
 struct RaceWithBucket(Race, usize);
 
-#[derive(Debug)]
 pub(crate) struct Pool {
     current_bucket: DrainingBucket,
     next_bucket: FillingBucket,
@@ -94,7 +90,7 @@ pub(crate) struct Pool {
 }
 
 impl Pool {
-    pub fn new(
+    pub(crate) fn new(
         target_rounds: usize,
         participants: &[ParticipantId],
         seed: u64,
@@ -116,7 +112,7 @@ impl Pool {
         })
     }
 
-    pub fn advance(&mut self) -> Result<bool, TournamentError> {
+    pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {
         // Record the current in the completed races.
         if let Some(race) = self.current_race.take() {
             if !race.is_complete() {
@@ -161,21 +157,21 @@ impl Pool {
         Ok(true)
     }
 
-    pub fn active_race(&mut self) -> Option<&mut Race> {
+    pub(crate) fn active_race(&mut self) -> Option<&mut Race> {
         self.current_race.as_mut()
     }
 
-    pub fn completed_race(&mut self, id: RaceId) -> Option<&mut Race> {
+    pub(crate) fn completed_race(&mut self, id: RaceId) -> Option<&mut Race> {
         self.completed_races
             .get_mut(id)
             .map(|RaceWithBucket(race, _)| race)
     }
 
-    pub fn is_complete(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.current_round >= self.max_round
     }
 
-    pub fn get_results(&self, rank: usize) -> Option<PoolResult> {
+    pub(crate) fn get_results(&self, rank: usize) -> Option<PoolResult> {
         if !self.is_complete() {
             return None;
         }
@@ -277,12 +273,6 @@ pub struct PoolView {
     pub current_race: Option<RaceView>,
     pub remaining_racers_in_round: Vec<ParticipantView>,
     pub completed_racers_in_round: Vec<ParticipantView>,
-}
-
-impl PoolView {
-    pub fn is_complete(&self) -> bool {
-        self.current_round >= self.max_rounds
-    }
 }
 
 impl Viewable<PoolView> for Pool {

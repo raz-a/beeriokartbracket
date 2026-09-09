@@ -16,7 +16,7 @@ use crate::{BracketSetId, Placement};
 
 // TODO: Look into having this hosted somewhere so others can view the current tourney state.
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 enum TournamentPhase {
     #[default]
     Registration,
@@ -26,7 +26,7 @@ enum TournamentPhase {
     _Complete,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Tournament {
     phase: TournamentPhase,
     config: Config,

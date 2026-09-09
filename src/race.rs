@@ -31,23 +31,15 @@ impl Placement {
         self.0
     }
 
-    pub fn placement_idx(&self) -> u8 {
+    pub(crate) fn placement_idx(&self) -> u8 {
         self.placement() - 1
     }
 
-    pub fn move_up(self) -> Option<Self> {
+    pub(crate) fn move_up(self) -> Option<Self> {
         if self.placement_idx() == 0 {
             None
         } else {
             Some(Placement(self.placement_idx()))
-        }
-    }
-
-    pub fn move_down(self) -> Option<Self> {
-        if self.placement() == MAX_RACERS as u8 {
-            None
-        } else {
-            Some(Placement(self.placement() + 1))
         }
     }
 }
@@ -59,14 +51,14 @@ pub enum RaceRuleset {
     Beerio,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Race {
     racers: Vec<(ParticipantId, Option<Placement>)>,
     ruleset: RaceRuleset,
 }
 
 impl Race {
-    pub fn set_ruleset(&mut self, ruleset: RaceRuleset) {
+    pub(crate) fn set_ruleset(&mut self, ruleset: RaceRuleset) {
         self.ruleset = ruleset;
     }
 
@@ -75,7 +67,7 @@ impl Race {
         self.ruleset
     }
 
-    pub fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
+    pub(crate) fn add_racers(&mut self, racers: &[ParticipantId]) -> Result<(), TournamentError> {
         if self.racers.len() + racers.len() > MAX_RACERS {
             return Err(TournamentError::RaceIsFull);
         }
@@ -88,7 +80,7 @@ impl Race {
         Ok(())
     }
 
-    pub fn _remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
+    fn _remove_racer(&mut self, racer: ParticipantId) -> Result<(), TournamentError> {
         if let Some(idx) = self.racers.iter().position(|(r, _)| *r == racer) {
             self.racers.remove(idx);
             Ok(())
@@ -97,11 +89,11 @@ impl Race {
         }
     }
 
-    pub fn clear_racers(&mut self) {
+    pub(crate) fn clear_racers(&mut self) {
         self.racers = vec![];
     }
 
-    pub fn set_placement(
+    pub(crate) fn set_placement(
         &mut self,
         racer: ParticipantId,
         place: Option<Placement>,
@@ -121,19 +113,19 @@ impl Race {
         }
     }
 
-    pub fn is_complete(&self) -> bool {
+    pub(crate) fn is_complete(&self) -> bool {
         !self.racers.is_empty() && self.racers.iter().all(|(_, p)| p.is_some())
     }
 
-    pub fn get_racers(&self) -> impl Iterator<Item = ParticipantId> {
+    pub(crate) fn get_racers(&self) -> impl Iterator<Item = ParticipantId> {
         self.racers.iter().map(|&(p, _)| p)
     }
 
-    pub fn get_racers_and_placements(&self) -> &[(ParticipantId, Option<Placement>)] {
+    pub(crate) fn get_racers_and_placements(&self) -> &[(ParticipantId, Option<Placement>)] {
         &self.racers
     }
 
-    pub fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
+    pub(crate) fn contains_racers(&self, racers: &[ParticipantId]) -> bool {
         let mut set: HashSet<_> = self.get_racers().collect();
         for id in racers {
             if !set.remove(id) {

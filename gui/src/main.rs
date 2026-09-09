@@ -2204,7 +2204,30 @@ fn describe_error(err: &TournamentError) -> String {
         TournamentError::InvalidPlacementValue => {
             "A finishing place is out of the valid range.".to_owned()
         }
-        other => format!("Unexpected error: {other:?}"),
+        TournamentError::NotImplemented => "That feature is not implemented yet.".to_owned(),
+        TournamentError::RaceIsFull => "That race already has the maximum number of racers.".to_owned(),
+        TournamentError::RacerAlreadyInRace => "That racer is already in this race.".to_owned(),
+        TournamentError::RacerNotInRace => "That racer is not in this race.".to_owned(),
+        TournamentError::RaceNotFound => "That race no longer exists.".to_owned(),
+        TournamentError::BracketSetAlreadyStarted => {
+            "That bracket heat has already started.".to_owned()
+        }
+        TournamentError::InvalidBracketSetSize => {
+            "That bracket heat has an unsupported number of racers.".to_owned()
+        }
+        TournamentError::InvalidGroupConfigurations => {
+            "The participants cannot be divided into valid race groups.".to_owned()
+        }
+        TournamentError::InvalidBracketId => "That bracket heat no longer exists.".to_owned(),
+        TournamentError::BracketNotReady => {
+            "That bracket heat is waiting for its feeder results.".to_owned()
+        }
+        TournamentError::InvalidBracketFormat => {
+            "The selected participant count cannot form a valid bracket.".to_owned()
+        }
+        TournamentError::BracketNotCompleted => {
+            "Finish every required bracket heat before advancing.".to_owned()
+        }
     }
 }
 

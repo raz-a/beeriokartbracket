@@ -15,7 +15,6 @@ impl Viewable<ParticipantView> for ParticipantId {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Participant {
     name: String,
 }
@@ -32,18 +31,17 @@ impl Participant {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct ParticipantScore {
     id: ParticipantId,
     score: usize,
 }
 
 impl ParticipantScore {
-    pub fn get_id(&self) -> ParticipantId {
+    pub(crate) fn get_id(&self) -> ParticipantId {
         self.id
     }
 
-    pub fn get_score(&self) -> usize {
+    pub(crate) fn get_score(&self) -> usize {
         self.score
     }
 }

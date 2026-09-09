@@ -1,6 +1,6 @@
 use std::num::NonZero;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub pool_rounds: NonZero<usize>,
     pub bracket_size: NonZero<usize>,

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::participant::{ParticipantMap, ParticipantView};
+use crate::persistence::PersistedState;
 use crate::view::Viewable;
 use crate::{
     ParticipantId, Placement, RaceRuleset, TournamentError,
@@ -12,17 +13,19 @@ use crate::{
 
 new_key_type! { pub struct BracketSetId; }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum FeederSource {
     Winners,
     Losers,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Feeder {
     id: BracketSetId,
     source: FeederSource,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct BracketSet {
     races: Vec<Race>,
     resolution: Option<BracketResolution>,
@@ -30,6 +33,7 @@ pub(crate) struct BracketSet {
     feeders: Vec<Feeder>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 enum BracketResolution {
     Decided {
         winners: Vec<ParticipantId>,
@@ -41,6 +45,62 @@ enum BracketResolution {
         locked_winners: Vec<ParticipantId>,
         locked_losers: Vec<ParticipantId>,
     },
+}
+
+struct BracketLoadContext<'a> {
+    participants: &'a ParticipantMap,
+    bracket_sets: &'a SlotMap<BracketSetId, BracketSet>,
+}
+
+impl PersistedState<BracketLoadContext<'_>> for BracketSet {
+    fn validate_loaded(&self, context: &BracketLoadContext<'_>) -> Result<(), &'static str> {
+        if !(MIN_LOSERS_BRACKET_RACE_SIZE..=MAX_RACERS).contains(&self.expected_size) {
+            return Err("bracket heat has an invalid expected size");
+        }
+        if self.races.is_empty() {
+            return Err("bracket heat has no races");
+        }
+        for race in &self.races {
+            race.validate_loaded(context.participants)?;
+        }
+        for feeder in &self.feeders {
+            if !context.bracket_sets.contains_key(feeder.id) {
+                return Err("bracket heat references a missing feeder");
+            }
+        }
+        match &self.resolution {
+            Some(BracketResolution::Decided { winners, losers }) => {
+                if winners
+                    .iter()
+                    .chain(losers)
+                    .any(|racer| !context.participants.contains_key(*racer))
+                {
+                    return Err("bracket resolution references a missing participant");
+                }
+            }
+            Some(BracketResolution::Tiebreak {
+                race,
+                open_seats,
+                locked_winners,
+                locked_losers,
+            }) => {
+                race.validate_loaded(context.participants)?;
+                if *open_seats == 0 || *open_seats >= race.get_racers().count() {
+                    return Err("bracket tiebreak has an invalid cutoff");
+                }
+                if locked_winners
+                    .iter()
+                    .chain(locked_losers)
+                    .any(|racer| !context.participants.contains_key(*racer))
+                {
+                    return Err("bracket tiebreak references a missing participant");
+                }
+            }
+            None => {}
+        }
+
+        Ok(())
+    }
 }
 
 impl BracketSet {
@@ -300,12 +360,14 @@ impl BracketSet {
 }
 
 /// How a losers-bracket round is fed.
+#[derive(serde::Serialize, serde::Deserialize)]
 enum BracketRoundKind {
     Winners,
     LosersIntake { wb_round: usize },
     LosersConsolidate,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct BracketRound {
     sets: Vec<BracketSetId>,
     kind: BracketRoundKind,
@@ -317,10 +379,40 @@ const MIN_LOSERS_BRACKET_RACE_SIZE: usize = 4;
 // Each heat advances its top 4 finishers.
 const ADVANCERS_PER_SET: usize = 4;
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Bracket {
     winners: Vec<BracketRound>,
     losers: Vec<BracketRound>,
     bracket_sets: SlotMap<BracketSetId, BracketSet>,
+}
+
+impl PersistedState<ParticipantMap> for Bracket {
+    fn validate_loaded(&self, participants: &ParticipantMap) -> Result<(), &'static str> {
+        if self.winners.is_empty() || self.losers.is_empty() {
+            return Err("bracket is missing rounds");
+        }
+        for round in self.winners.iter().chain(&self.losers) {
+            if round.sets.is_empty() {
+                return Err("bracket round has no heats");
+            }
+            if round
+                .sets
+                .iter()
+                .any(|set| !self.bracket_sets.contains_key(*set))
+            {
+                return Err("bracket round references a missing heat");
+            }
+        }
+        let context = BracketLoadContext {
+            participants,
+            bracket_sets: &self.bracket_sets,
+        };
+        for (_, set) in &self.bracket_sets {
+            set.validate_loaded(&context)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Bracket {

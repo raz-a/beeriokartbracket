@@ -2,13 +2,14 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 use std::num::NonZero;
 
-use rand::rngs::StdRng;
+use rand::rngs::Xoshiro256PlusPlus;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use slotmap::SlotMap;
 
 use crate::TournamentError;
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantScore, ParticipantView};
+use crate::persistence::PersistedState;
 use crate::race::{MAX_RACERS, Race, RaceId, RaceRuleset, RaceView};
 use crate::race_group::RaceGroupTracker;
 use crate::view::Viewable;
@@ -19,7 +20,7 @@ use crate::view::Viewable;
 /// covered by `t` in `{7, 8}` are rejected.
 const MIN_POOL_RACE_SIZE: usize = 6;
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct FillingBucket {
     participants: Vec<ParticipantId>,
 }
@@ -42,6 +43,7 @@ impl FillingBucket {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct DrainingBucket {
     participants: Vec<ParticipantId>,
     tracker: RaceGroupTracker,
@@ -76,8 +78,10 @@ impl PoolResult {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct RaceWithBucket(Race, usize);
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Pool {
     current_bucket: DrainingBucket,
     next_bucket: FillingBucket,
@@ -86,7 +90,63 @@ pub(crate) struct Pool {
     number_of_participants: usize,
     current_race: Option<Race>,
     completed_races: SlotMap<RaceId, RaceWithBucket>,
-    rng: StdRng,
+    rng: Xoshiro256PlusPlus,
+}
+
+impl PersistedState<ParticipantMap> for Pool {
+    fn validate_loaded(&self, participants: &ParticipantMap) -> Result<(), &'static str> {
+        if self.current_round > self.max_round {
+            return Err("pool round exceeds its configured maximum");
+        }
+        if self.number_of_participants != participants.len() {
+            return Err("pool participant count does not match the tournament");
+        }
+        if self.current_bucket.tracker.remaining_participant_count()
+            != Some(self.current_bucket.participants.len())
+        {
+            return Err("pool bucket tracker does not match its participants");
+        }
+
+        let mut current_participants = std::collections::HashSet::new();
+        for racer in self
+            .current_bucket
+            .participants
+            .iter()
+            .chain(&self.next_bucket.participants)
+            .copied()
+        {
+            if !participants.contains_key(racer) {
+                return Err("pool bucket references a missing participant");
+            }
+            if !current_participants.insert(racer) {
+                return Err("participant appears more than once in the current pool round");
+            }
+        }
+
+        if let Some(race) = &self.current_race {
+            race.validate_loaded(participants)?;
+            for racer in race.get_racers() {
+                if !current_participants.insert(racer) {
+                    return Err("active pool racer also appears in a bucket");
+                }
+            }
+        }
+        if current_participants.len() != self.number_of_participants {
+            return Err("current pool round does not contain every participant");
+        }
+
+        for (_, RaceWithBucket(race, round)) in &self.completed_races {
+            if *round >= self.max_round {
+                return Err("completed pool race has an invalid round");
+            }
+            race.validate_loaded(participants)?;
+            if !race.is_complete() {
+                return Err("completed pool race has missing placements");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Pool {
@@ -108,7 +168,7 @@ impl Pool {
             number_of_participants: participants.len(),
             current_race: Default::default(),
             completed_races: Default::default(),
-            rng: StdRng::seed_from_u64(seed),
+            rng: Xoshiro256PlusPlus::seed_from_u64(seed),
         })
     }
 
@@ -523,7 +583,7 @@ mod tests {
             let mut filling = FillingBucket::default();
             filling.push_participants(&ids);
             let mut draining = filling.seal().unwrap();
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
             draining.pop_next_race_candidate(&mut rng).unwrap()
         };
 
@@ -546,7 +606,7 @@ mod tests {
             let mut filling = FillingBucket::default();
             filling.push_participants(&ids);
             let mut draining = filling.seal().unwrap();
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
             seen.extend(draining.pop_next_race_candidate(&mut rng).unwrap());
         }
 

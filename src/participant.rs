@@ -15,6 +15,7 @@ impl Viewable<ParticipantView> for ParticipantId {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Participant {
     name: String,
 }

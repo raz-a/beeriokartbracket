@@ -5,18 +5,17 @@ use crate::config::Config;
 use crate::error::TournamentError;
 use crate::gauntlet::Gauntlet;
 use crate::participant::{Participant, ParticipantId, ParticipantMap, ParticipantView};
+use crate::persistence::PersistedState;
 use crate::pool::Pool;
 use crate::race::{Race, RaceId};
 use crate::view::{RegistrationView, TournamentView, Viewable};
 use crate::{BracketSetId, Placement};
 
-// TODO: Add the ability to save and load tournaments.
-
 // TODO: Add ability to go back from states.
 
 // TODO: Look into having this hosted somewhere so others can view the current tourney state.
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 enum TournamentPhase {
     #[default]
     Registration,
@@ -26,11 +25,22 @@ enum TournamentPhase {
     _Complete,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Tournament {
     phase: TournamentPhase,
     config: Config,
     participants: ParticipantMap,
+}
+
+impl PersistedState for Tournament {
+    fn validate_loaded(&self, _context: &()) -> Result<(), &'static str> {
+        match &self.phase {
+            TournamentPhase::Registration | TournamentPhase::_Complete => Ok(()),
+            TournamentPhase::Pools(pool) => pool.validate_loaded(&self.participants),
+            TournamentPhase::Bracket(bracket) => bracket.validate_loaded(&self.participants),
+            TournamentPhase::Gauntlet(gauntlet) => gauntlet.validate_loaded(&self.participants),
+        }
+    }
 }
 
 impl Tournament {
@@ -271,6 +281,69 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
+    use crate::{PersistenceError, deserialize_tournament, serialize_tournament};
+
+    fn round_trip(tournament: &Tournament) -> Tournament {
+        let json = serialize_tournament("Test Cup", tournament).unwrap();
+        deserialize_tournament(&json).unwrap().1
+    }
+
+    #[test]
+    fn persistence_round_trips_bracket_gauntlet_and_complete() {
+        let mut tournament = Tournament::default();
+        let racers: Vec<_> = (1..=16)
+            .map(|number| {
+                tournament
+                    .participants
+                    .insert(Participant::new(&format!("Player {number}")))
+            })
+            .collect();
+
+        tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
+        assert!(matches!(
+            round_trip(&tournament).view(),
+            TournamentView::Bracket(_)
+        ));
+
+        tournament.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
+            racers[..4].to_vec(),
+            racers[4..8].to_vec(),
+            NonZero::new(3).unwrap(),
+        )));
+        tournament.advance_gauntlet().unwrap();
+        assert!(matches!(
+            round_trip(&tournament).view(),
+            TournamentView::Gauntlet(_)
+        ));
+
+        tournament.phase = TournamentPhase::_Complete;
+        assert!(matches!(
+            round_trip(&tournament).view(),
+            TournamentView::Complete
+        ));
+    }
+
+    #[test]
+    fn persistence_rejects_dangling_pool_participant() {
+        let mut tournament = Tournament::default();
+        let racers: Vec<_> = (1..=16)
+            .map(|number| {
+                tournament
+                    .participants
+                    .insert(Participant::new(&format!("Player {number}")))
+            })
+            .collect();
+        tournament.phase = TournamentPhase::Pools(Box::new(
+            Pool::new(8, &racers, tournament.config.seed).unwrap(),
+        ));
+        tournament.participants.remove(racers[0]);
+
+        let json = serialize_tournament("Test Cup", &tournament).unwrap();
+        assert!(matches!(
+            deserialize_tournament(&json),
+            Err(PersistenceError::InvalidTournament(_))
+        ));
+    }
 
     #[test]
     fn gauntlet_facade_runs_race_and_completes_tournament() {

@@ -70,10 +70,13 @@ slotmap's own representation. Keep custom validation narrow:
 - reject references to participants or bracket sets absent from their slotmaps;
 - reject obviously impossible racer counts and phase structure.
 
-Validation helpers should remain private and live beside the types whose
-invariants they inspect. The persistence module calls one top-level tournament
-validation method before returning a loaded value. Do not build a second model
-or recompute every derived result merely to detect hand-edited files.
+The crate-private `PersistedState<Context>` trait combines the `Serialize` and
+owned `Deserialize` requirements with `validate_loaded`. Each implementation
+stays beside the type whose invariants it checks and receives only the context
+it needs, such as the participant table. The persistence module invokes the
+top-level tournament implementation before returning a loaded value. Do not
+build a second model or recompute every derived result merely to detect
+hand-edited files.
 
 ### GUI: one file module
 

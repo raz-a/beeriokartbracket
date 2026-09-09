@@ -2,20 +2,82 @@ use std::collections::HashMap;
 use std::num::NonZero;
 
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantView};
+use crate::persistence::PersistedState;
 use crate::race::{Race, RaceView};
 use crate::view::Viewable;
 use crate::{Placement, RaceRuleset, TournamentError};
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct GauntletRacer {
     starting_lives: usize,
     current_lives: usize,
     placement: Option<Placement>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Gauntlet {
+    #[serde(with = "gauntlet_racers")]
     racers: HashMap<ParticipantId, GauntletRacer>,
     races: Vec<Race>,
     beerio_interval: usize,
+}
+
+mod gauntlet_racers {
+    use std::collections::HashMap;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::{GauntletRacer, ParticipantId};
+
+    pub(super) fn serialize<S>(
+        racers: &HashMap<ParticipantId, GauntletRacer>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        racers.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<ParticipantId, GauntletRacer>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let racers = Vec::<(ParticipantId, GauntletRacer)>::deserialize(deserializer)?;
+        let mut result = HashMap::with_capacity(racers.len());
+        for (id, racer) in racers {
+            if result.insert(id, racer).is_some() {
+                return Err(serde::de::Error::custom("duplicate gauntlet racer"));
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl PersistedState<ParticipantMap> for Gauntlet {
+    fn validate_loaded(&self, participants: &ParticipantMap) -> Result<(), &'static str> {
+        if self.racers.is_empty() || self.racers.len() > crate::race::MAX_RACERS {
+            return Err("gauntlet has an invalid racer count");
+        }
+        if self.beerio_interval == 0 {
+            return Err("gauntlet Beerio interval cannot be zero");
+        }
+        for (id, racer) in &self.racers {
+            if !participants.contains_key(*id) {
+                return Err("gauntlet references a missing participant");
+            }
+            if racer.starting_lives == 0 || racer.current_lives > racer.starting_lives {
+                return Err("gauntlet racer has invalid lives");
+            }
+        }
+        for race in &self.races {
+            race.validate_loaded(participants)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Gauntlet {

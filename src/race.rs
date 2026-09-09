@@ -4,14 +4,25 @@ use slotmap::new_key_type;
 
 use crate::error::TournamentError;
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantView};
+use crate::persistence::PersistedState;
 use crate::view::Viewable;
 
 new_key_type! { pub struct RaceId; }
 
 pub(crate) const MAX_RACERS: usize = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Placement(u8);
+
+impl<'de> serde::Deserialize<'de> for Placement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+        Self::new(value).map_err(|_| serde::de::Error::custom("invalid placement"))
+    }
+}
 
 impl Placement {
     pub const DISQUALIFIED: Self = Self(u8::MAX);
@@ -55,17 +66,40 @@ impl Placement {
     }
 }
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RaceRuleset {
     #[default]
     Vanilla,
     Beerio,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Race {
     racers: Vec<(ParticipantId, Option<Placement>)>,
     ruleset: RaceRuleset,
+}
+
+impl PersistedState<ParticipantMap> for Race {
+    fn validate_loaded(&self, participants: &ParticipantMap) -> Result<(), &'static str> {
+        if self.racers.len() > MAX_RACERS {
+            return Err("race exceeds the maximum racer count");
+        }
+
+        let mut racers = HashSet::new();
+        for (racer, placement) in &self.racers {
+            if !participants.contains_key(*racer) {
+                return Err("race references a missing participant");
+            }
+            if !racers.insert(*racer) {
+                return Err("race contains a participant more than once");
+            }
+            if placement.is_some_and(|placement| !placement.is_valid_for_race(self.racers.len())) {
+                return Err("race contains an invalid placement");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Race {
@@ -159,6 +193,12 @@ mod tests {
         assert_eq!(placement.points(), 0);
         assert_eq!(placement.placement_idx(), None);
         assert!(placement.is_valid_for_race(2));
+    }
+
+    #[test]
+    fn deserialization_rejects_invalid_placement() {
+        assert!(serde_json::from_str::<Placement>("0").is_err());
+        assert!(serde_json::from_str::<Placement>("9").is_err());
     }
 }
 

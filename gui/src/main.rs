@@ -1,3 +1,5 @@
+mod persistence;
+
 use std::collections::HashMap;
 use std::num::NonZero;
 
@@ -9,6 +11,8 @@ use beeriokartbracket::{
 use eframe::egui;
 #[cfg(feature = "manual-validation")]
 use rand::seq::SliceRandom;
+
+use crate::persistence::FileSession;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -41,8 +45,25 @@ enum Action {
     Next,
 }
 
+enum FileAction {
+    New,
+    Open,
+    Create,
+    Rename,
+}
+
+#[derive(Default)]
+enum StartScreen {
+    #[default]
+    Menu,
+    New,
+}
+
 struct TournamentApp {
     tournament: Tournament,
+    file_session: Option<FileSession>,
+    start_screen: StartScreen,
+    tournament_name: String,
     new_name: String,
     #[cfg(feature = "manual-validation")]
     add_count: usize,
@@ -63,6 +84,8 @@ struct TournamentApp {
     show_scores: bool,
     status: String,
     error: Option<String>,
+    show_save_failure: bool,
+    allow_unsaved_exit: bool,
     logo: Option<egui::TextureHandle>,
     background: Option<egui::TextureHandle>,
 }
@@ -71,6 +94,9 @@ impl Default for TournamentApp {
     fn default() -> Self {
         Self {
             tournament: Tournament::default(),
+            file_session: None,
+            start_screen: StartScreen::default(),
+            tournament_name: String::new(),
             new_name: String::new(),
             #[cfg(feature = "manual-validation")]
             add_count: 16,
@@ -86,6 +112,8 @@ impl Default for TournamentApp {
             show_scores: false,
             status: String::new(),
             error: None,
+            show_save_failure: false,
+            allow_unsaved_exit: false,
             logo: None,
             background: None,
         }
@@ -108,6 +136,7 @@ impl eframe::App for TournamentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let view = self.tournament.view();
         let mut action: Option<Action> = None;
+        let mut file_action: Option<FileAction> = None;
 
         // Tile the beer texture behind every panel (repeat at native size).
         if let Some(background) = &self.background {
@@ -125,8 +154,61 @@ impl eframe::App for TournamentApp {
             );
         }
 
+        if self.file_session.is_none() {
+            egui::CentralPanel::default()
+                .show(ctx, |ui| self.start_screen_ui(ui, &mut file_action));
+            if let Some(file_action) = file_action {
+                self.apply_file_action(file_action);
+            }
+            self.error_popup(ctx);
+            return;
+        }
+
+        let save_failed = self
+            .file_session
+            .as_ref()
+            .is_some_and(|session| session.save_error().is_some());
+        if save_failed
+            && !self.allow_unsaved_exit
+            && ctx.input(|input| input.viewport().close_requested())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.show_save_failure = true;
+        }
+
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
             ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("New").clicked() {
+                    file_action = Some(FileAction::New);
+                }
+                if ui.button("Open").clicked() {
+                    file_action = Some(FileAction::Open);
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let failed = self
+                        .file_session
+                        .as_ref()
+                        .is_some_and(|session| session.save_error().is_some());
+                    let text = if failed { "Save failed" } else { "Saved" };
+                    let color = if failed {
+                        ui.visuals().error_fg_color
+                    } else {
+                        ACTIVE_GREEN_BRIGHT
+                    };
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(text).color(color)).frame(false))
+                        .clicked()
+                        && failed
+                    {
+                        self.show_save_failure = true;
+                    }
+                    if let Some(session) = &self.file_session {
+                        ui.label(session.path().display().to_string());
+                    }
+                });
+            });
             ui.vertical_centered(|ui| {
                 if let Some(logo) = &self.logo {
                     let size = logo.size_vec2();
@@ -135,6 +217,25 @@ impl eframe::App for TournamentApp {
                     ui.add(egui::Image::new(sized));
                 }
                 banner(ui, phase_name(&view), 22.0);
+                if matches!(view, TournamentView::Registration(_)) {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.tournament_name)
+                            .desired_width(360.0)
+                            .horizontal_align(egui::Align::Center),
+                    );
+                    let entered = response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    if entered
+                        || (response.lost_focus()
+                            && self.file_session.as_ref().is_some_and(|session| {
+                                session.name() != self.tournament_name.trim()
+                            }))
+                    {
+                        file_action = Some(FileAction::Rename);
+                    }
+                } else {
+                    outlined_text(ui, &self.tournament_name, 20.0, CREAM);
+                }
             });
             ui.add_space(6.0);
         });
@@ -202,15 +303,243 @@ impl eframe::App for TournamentApp {
             });
         });
 
-        if let Some(action) = action {
+        if let Some(file_action) = file_action {
+            self.apply_file_action(file_action);
+        } else if let Some(action) = action {
             self.apply(action);
         }
 
+        self.save_failure_popup(ctx);
         self.error_popup(ctx);
     }
 }
 
 impl TournamentApp {
+    fn start_screen_ui(&mut self, ui: &mut egui::Ui, action: &mut Option<FileAction>) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(80.0);
+            if let Some(logo) = &self.logo {
+                let size = logo.size_vec2();
+                let scale = 120.0 / size.y;
+                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                    logo.id(),
+                    size * scale,
+                )));
+            }
+            ui.add_space(24.0);
+
+            match self.start_screen {
+                StartScreen::Menu => {
+                    if ui
+                        .add_sized([220.0, 40.0], egui::Button::new("New"))
+                        .clicked()
+                    {
+                        self.tournament_name.clear();
+                        self.start_screen = StartScreen::New;
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized([220.0, 40.0], egui::Button::new("Open"))
+                        .clicked()
+                    {
+                        *action = Some(FileAction::Open);
+                    }
+                }
+                StartScreen::New => {
+                    ui.label("Tournament name");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.tournament_name)
+                            .desired_width(360.0)
+                            .horizontal_align(egui::Align::Center),
+                    );
+                    let entered = response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    let can_create = !self.tournament_name.trim().is_empty();
+                    if ui
+                        .add_enabled(
+                            can_create,
+                            egui::Button::new("Create").min_size(egui::vec2(220.0, 40.0)),
+                        )
+                        .clicked()
+                        || (entered && can_create)
+                    {
+                        *action = Some(FileAction::Create);
+                    }
+                    if ui.button("Back").clicked() {
+                        self.start_screen = StartScreen::Menu;
+                    }
+                }
+            }
+        });
+    }
+
+    fn apply_file_action(&mut self, action: FileAction) {
+        if self
+            .file_session
+            .as_ref()
+            .is_some_and(|session| session.save_error().is_some())
+        {
+            self.show_save_failure = true;
+            return;
+        }
+
+        match action {
+            FileAction::New => {
+                if !self.save_before_navigation() {
+                    return;
+                }
+                self.file_session = None;
+                self.tournament = Tournament::default();
+                self.tournament_name.clear();
+                self.start_screen = StartScreen::New;
+                self.clear_transient_state();
+            }
+            FileAction::Open => {
+                if !self.save_before_navigation() {
+                    return;
+                }
+                let Some(path) = persistence::choose_open_path() else {
+                    return;
+                };
+                match FileSession::open(path) {
+                    Ok(opened) => {
+                        let recovered = opened.recovered_backup;
+                        self.tournament_name = opened.session.name().to_owned();
+                        self.tournament = opened.tournament;
+                        self.file_session = Some(opened.session);
+                        self.clear_transient_state();
+                        self.sync_config_from_tournament();
+                        self.status = if recovered {
+                            "Recovered the previous save from backup.".to_owned()
+                        } else {
+                            "Tournament opened.".to_owned()
+                        };
+                    }
+                    Err(error) => self.error = Some(error.to_string()),
+                }
+            }
+            FileAction::Create => {
+                let name = self.tournament_name.trim().to_owned();
+                let Some(path) = persistence::choose_new_path(&name) else {
+                    return;
+                };
+                let tournament = Tournament::default();
+                match FileSession::create(path, name.clone(), &tournament) {
+                    Ok(session) => {
+                        self.tournament = tournament;
+                        self.file_session = Some(session);
+                        self.tournament_name = name;
+                        self.clear_transient_state();
+                        self.sync_config_from_tournament();
+                        self.status = "Tournament created.".to_owned();
+                    }
+                    Err(error) => self.error = Some(error.to_string()),
+                }
+            }
+            FileAction::Rename => {
+                let name = self.tournament_name.trim().to_owned();
+                if name.is_empty() {
+                    if let Some(session) = &self.file_session {
+                        self.tournament_name = session.name().to_owned();
+                    }
+                    return;
+                }
+                if let Some(session) = &mut self.file_session {
+                    session.set_name(name.clone());
+                    self.tournament_name = name;
+                    if session.save(&self.tournament).is_err() {
+                        self.show_save_failure = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn save_before_navigation(&mut self) -> bool {
+        let Some(session) = &mut self.file_session else {
+            return true;
+        };
+        match session.save(&self.tournament) {
+            Ok(()) => true,
+            Err(_) => {
+                self.show_save_failure = true;
+                false
+            }
+        }
+    }
+
+    fn clear_transient_state(&mut self) {
+        self.new_name.clear();
+        self.placement_inputs.clear();
+        self.race_edits.clear();
+        self.bracket_edits.clear();
+        self.gauntlet_edits.clear();
+        self.bracket_heights.clear();
+        self.show_scores = false;
+        self.status.clear();
+        self.error = None;
+        self.show_save_failure = false;
+        self.allow_unsaved_exit = false;
+    }
+
+    fn sync_config_from_tournament(&mut self) {
+        let TournamentView::Registration(registration) = self.tournament.view() else {
+            return;
+        };
+        self.pool_rounds = registration.config.pool_rounds.get();
+        self.bracket_size = registration.config.bracket_size.get();
+        self.races_per_round = registration.config.bracket_races_per_round.get();
+        self.gauntlet_lives = registration.config.gauntlet_lives.get();
+    }
+
+    fn save_failure_popup(&mut self, ctx: &egui::Context) {
+        if !self.show_save_failure {
+            return;
+        }
+        let Some(message) = self
+            .file_session
+            .as_ref()
+            .and_then(FileSession::save_error)
+            .map(str::to_owned)
+        else {
+            self.show_save_failure = false;
+            return;
+        };
+
+        let mut open = true;
+        egui::Window::new("Tournament not saved")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.label("The latest tournament action is only in memory.");
+                ui.label(message);
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Retry").clicked()
+                        && let Some(session) = &mut self.file_session
+                        && let Ok(()) = session.save(&self.tournament)
+                    {
+                        self.show_save_failure = false;
+                        self.status = "Tournament saved.".to_owned();
+                    }
+                    if ui.button("Exit Without Saving").clicked() {
+                        self.allow_unsaved_exit = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_save_failure = false;
+                    }
+                });
+            });
+
+        if !open {
+            self.show_save_failure = false;
+        }
+    }
+
     fn registration_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -747,6 +1076,15 @@ impl TournamentApp {
     }
 
     fn apply(&mut self, action: Action) {
+        if self
+            .file_session
+            .as_ref()
+            .is_some_and(|session| session.save_error().is_some())
+        {
+            self.show_save_failure = true;
+            return;
+        }
+
         let outcome: Result<String, _> = match action {
             Action::Add(name) => {
                 let result = self
@@ -863,7 +1201,16 @@ impl TournamentApp {
         };
 
         match outcome {
-            Ok(message) => self.status = message,
+            Ok(message) => {
+                if let Some(session) = &mut self.file_session
+                    && session.save(&self.tournament).is_err()
+                {
+                    self.status.clear();
+                    self.show_save_failure = true;
+                    return;
+                }
+                self.status = message;
+            }
             Err(e) => {
                 self.status.clear();
                 self.error = Some(describe_error(&e));

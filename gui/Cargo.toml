@@ -11,3 +11,7 @@ beeriokartbracket = { path = ".." }
 eframe = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rand = { version = "0.10.2", optional = true }
+rfd = "0.15"
+
+[dev-dependencies]
+tempfile = "3"

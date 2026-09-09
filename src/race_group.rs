@@ -4,6 +4,7 @@ use crate::race::MAX_RACERS;
 /// Splits a set of participants into races whose sizes differ by at most one,
 /// so every race stays as full as the size bounds allow. Shared by the pool
 /// qualifier and the bracket, which pass different minimum race sizes.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct RaceGroupTracker {
     full_race_size: usize,
     full_race_count: usize,
@@ -11,6 +12,13 @@ pub(crate) struct RaceGroupTracker {
 }
 
 impl RaceGroupTracker {
+    pub(crate) fn remaining_participant_count(&self) -> Option<usize> {
+        let short_race_size = self.full_race_size.checked_sub(1)?;
+        (self.full_race_size <= MAX_RACERS).then_some(
+            self.full_race_size * self.full_race_count + short_race_size * self.small_race_count,
+        )
+    }
+
     /// Builds a tracker that splits `total_participants` into races of size
     /// `min_race_size..=MAX_RACERS`, preferring the largest full size `t` that
     /// divides cleanly into races of size `t` and `t - 1`.

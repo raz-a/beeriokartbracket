@@ -19,8 +19,7 @@ read-only view types, versioned JSON persistence, and unit tests throughout the
 domain. The GUI supports tournament setup, participant editing, placement entry
 for every competitive phase, phase advancement, and New/Open/Save/Rename file
 workflows. Remaining work is refinement rather than scaffolding; notable gaps
-include drag-and-drop bracket organization and the Beerio finish-before-drinking
-scoring override.
+include drag-and-drop bracket organization.
 
 ## How to work in this repo (read this first)
 
@@ -89,7 +88,7 @@ The core logic should be UI-independent and thoroughly unit-testable. Key concep
   receive twice this value).
 - **Race** — up to 8 participant IDs with optional validated placements and a
   `RaceRuleset`. Points are currently derived from placement as 8 down to 1;
-  disqualification maps to last place.
+  `Placement::DISQUALIFIED` scores zero and has no numeric placement.
 - **Race groups** — `RaceGroupTracker` divides a participant count into workable
   groups. Pools and bracket stages apply phase-specific minimum group sizes
   rather than a general-purpose 8/4/2 category enum.
@@ -104,8 +103,9 @@ The core logic should be UI-independent and thoroughly unit-testable. Key concep
   until placements are resolved. The Beerio interval currently reuses the same
   config value (3 by default), a coupling to preserve or separate deliberately.
 - **Ruleset** — a per-race axis orthogonal to race size: **Vanilla** or **Beerio
-  Kart**. Rulesets are scheduled, but the Beerio finish-before-you-drink penalty
-  is not yet represented in race results.
+  Kart**. Record the Beerio finish-before-you-drink penalty using the existing
+  `Placement::DISQUALIFIED` result selected as `DQ` in the GUI; it does not need
+  a separate result field or race type.
 
 ### Initial version (v1) assumptions
 
@@ -143,9 +143,9 @@ Every race uses one of two **rulesets**, orthogonal to race size:
   course).
 - **Beerio Kart** — Vanilla plus drinking rules. The only rule that touches
   *scoring* is the penalty: **a racer who finishes the race before completing
-  their drink is forced to 8th place (1 point)**. Model this as a per-result
-  override, not a distinct race type. The "beer zone" / no-drink-and-drive rules
-  are physical and have no data-model impact.
+  their drink is disqualified and receives 0 points**. Tournament operators
+  record this with the existing `DQ` placement. The "beer zone" /
+  no-drink-and-drive rules are physical and have no data-model impact.
 
 ### Point distribution (concrete default)
 

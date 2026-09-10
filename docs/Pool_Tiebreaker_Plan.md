@@ -82,9 +82,8 @@ Cut logic (already worked out; lives where `get_top_players` is now):
   ordering within `locked` comes from `HashMap` iteration. If bracket seeding
   reads that order, add a stable secondary sort key
   (`b.score.cmp(&a.score).then(a.id.cmp(&b.id))`).
-- **Beerio penalty.** Scoring still uses raw placement points; the
-  finish-before-drink ⇒ forced-8th override isn't modeled on a race result yet.
-  Standings aren't final until that exists.
+- **Beerio penalty.** The finish-before-drink penalty is entered using the
+  existing `Placement::DISQUALIFIED` result (`DQ` in the GUI) and scores zero.
 
 ## Pointers
 

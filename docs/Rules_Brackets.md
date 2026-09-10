@@ -40,7 +40,7 @@ New to this year is the introduction of **8-player races**, with the following p
 >
 > If you have any questions about the beverage you'd like to consume during the race, reach out to a tournament official for a ruling.
 >
-> ***If you complete the race before you complete your drink, you will automatically receive an '8th Place' placement and receive 1 point.***
+> ***If you complete the race before you complete your drink, you will be disqualified from the race and receive 0 points.***
 >
 > *Addendum: At the end of a race, if a drink has a few drops left, it is acceptable (WITHIN REASON). If there is a dispute about a drink being empty at the end of the race, a tournament official will have the final call.*
 

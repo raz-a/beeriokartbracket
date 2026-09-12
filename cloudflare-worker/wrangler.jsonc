@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beeriokartbracket-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-12",
+  "kv_namespaces": [
+    {
+      "binding": "SNAPSHOTS",
+      "id": "replace-with-production-namespace-id"
+    }
+  ]
+}

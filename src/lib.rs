@@ -21,11 +21,11 @@ pub use participant::{ParticipantId, ParticipantView};
 pub use persistence::{PersistenceError, deserialize_tournament, serialize_tournament};
 pub use pool::{PoolResultView, PoolView};
 pub use publication::{
-    PUBLIC_SNAPSHOT_SCHEMA_VERSION, PublicActiveRace, PublicBracket, PublicBracketHeat,
-    PublicBracketRound, PublicGauntlet, PublicGauntletRacer, PublicHeatStatus, PublicPlacement,
-    PublicPoolStanding, PublicPools, PublicRaceResult, PublicRacerSlot, PublicRegistration,
-    PublicRuleset, PublicStandingStatus, PublicTournamentPhase, PublicTournamentResult,
-    PublicTournamentSnapshot,
+    PUBLIC_SNAPSHOT_SCHEMA_VERSION, PublicActiveRace, PublicBracket, PublicBracketFeeder,
+    PublicBracketHeat, PublicBracketRound, PublicFeederSource, PublicGauntlet, PublicGauntletRacer,
+    PublicHeatStatus, PublicPlacement, PublicPoolStanding, PublicPools, PublicRaceResult,
+    PublicRacerSlot, PublicRegistration, PublicRuleset, PublicStandingStatus,
+    PublicTournamentPhase, PublicTournamentResult, PublicTournamentSnapshot,
 };
 pub use race::{Placement, RaceId, RaceRuleset, RaceView};
 pub use tournament::Tournament;

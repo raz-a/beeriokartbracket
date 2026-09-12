@@ -602,102 +602,239 @@ tbody tr:nth-child(odd) {
     border-color: #8c6b20;
 }
 
-.segment {
-    width: min(420px, 100%);
-    margin: 18px auto;
+.bracket-lanes {
+    margin-top: 20px;
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    border: 1px solid #6f5524;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
 }
 
-.segment button {
-    border: 0;
-    padding: 12px;
+.bracket-lane {
+    min-width: 0;
+    padding: 16px;
     background: #18140f;
-    color: #b9a985;
-    cursor: pointer;
+    border-top: 4px solid var(--green);
 }
 
-.segment button+button {
-    border-left: 1px solid #6f5524;
+.bracket-lane--losers {
+    border-top-color: var(--amber);
 }
 
-.segment button.active {
-    background: var(--amber);
-    color: #171008;
-}
-
-.rounds {
-    display: grid;
-    gap: 10px;
-}
-
-.round {
-    border-top: 1px solid #574321;
-}
-
-.round summary {
-    min-height: 54px;
-    padding: 12px 4px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    cursor: pointer;
-    list-style: none;
+.bracket-lane h3 {
+    margin: 0 0 14px;
     color: var(--cream);
-    font: 17px "Mario", Impact, sans-serif;
+    font: 22px "Mario", Impact, sans-serif;
 }
 
-.round summary::-webkit-details-marker {
+.bracket-lane--losers h3 {
+    color: var(--amber);
+}
+
+.bracket-round-nav {
     display: none;
 }
 
-.round summary small {
-    color: #aa9979;
-    font: 13px Georgia, serif;
+.bracket-tree-scroll {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-color: #70562a #18140f;
 }
 
-.heats {
+.bracket-tree {
+    --bracket-column-width: 286px;
+    position: relative;
+    isolation: isolate;
+    min-width: max-content;
+    min-height: 320px;
+    padding: 0 2px 14px;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    padding-bottom: 18px;
+    grid-auto-flow: column;
+    grid-auto-columns: var(--bracket-column-width);
+    gap: 62px;
 }
 
-.heat {
+.bracket-connectors {
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.bracket-connectors path {
+    fill: none;
+    stroke: #8b6b31;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.bracket-round-column {
+    width: var(--bracket-column-width);
+    min-width: var(--bracket-column-width);
+    max-width: var(--bracket-column-width);
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: 48px 1fr;
+}
+
+.bracket-round-heading {
+    position: relative;
+    z-index: 1;
+    padding: 0 4px 10px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid #574321;
+}
+
+.bracket-round-heading strong {
+    color: var(--cream);
+    font: 16px "Mario", Impact, sans-serif;
+}
+
+.bracket-round-heading span {
+    color: #aa9979;
+    font-size: 12px;
+}
+
+.bracket-round-heats {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    gap: 28px;
+    padding-block: 16px;
+}
+
+.bracket-heat {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: var(--bracket-column-width);
     min-width: 0;
-    padding: 14px;
+    overflow: hidden;
+    padding: 12px;
     background: #2a2116;
-    border-left: 3px solid #70562a;
+    border: 1px solid #574321;
+    border-left: 4px solid #70562a;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+    font-family: "Mario", Impact, sans-serif;
 }
 
-.heat--active {
+.bracket-heat.heat--active {
     background: #19351f;
+    border-color: #467d4e;
     border-left-color: var(--green);
+    box-shadow: 0 0 0 1px rgba(114, 212, 125, .22), 0 5px 18px rgba(0, 0, 0, .3);
 }
 
-.heat header {
+.bracket-heat.heat--complete {
+    border-left-color: #467d4e;
+}
+
+.bracket-heat>header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 10px;
 }
 
-.heat ul {
+.bracket-roster {
     list-style: none;
-    margin: 12px 0 0;
+    margin: 10px 0 0;
     padding: 0;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 5px 14px;
+    gap: 4px 10px;
 }
 
-.heat li {
+.bracket-roster li {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
     overflow-wrap: anywhere;
 }
 
-.waiting,
-.race-count,
+.tree-marker {
+    width: 16px;
+    flex: 0 0 16px;
+    color: #8f7850;
+    font: 10px "Mario", Impact, sans-serif;
+    text-align: center;
+}
+
+.feeder-slot {
+    color: #a99b81;
+    font-style: italic;
+}
+
+.feeder-slot--losers .tree-marker {
+    color: var(--amber);
+}
+
+.heat-results {
+    min-width: 0;
+    margin-top: 10px;
+    border-top: 1px solid #574321;
+}
+
+.heat-results summary {
+    padding: 9px 2px 2px;
+    color: #cbbb99;
+    cursor: pointer;
+    font: 11px "Mario", Impact, sans-serif;
+}
+
+.heat-results-scroll {
+    width: 100%;
+    min-width: 0;
+    margin-top: 7px;
+    overflow-x: auto;
+}
+
+.heat-results table {
+    min-width: 0;
+    max-width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 10px;
+}
+
+.heat-results th,
+.heat-results td {
+    width: 38px;
+    min-width: 0;
+    padding: 4px 3px;
+    border: 1px solid #574321;
+    text-align: center;
+}
+
+.heat-results th:first-child,
+.heat-results td:first-child {
+    width: 88px;
+    min-width: 88px;
+    max-width: 88px;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.heat-results th {
+    color: var(--amber);
+    background: #18140f;
+    font-size: 9px;
+}
+
+.heat-results td {
+    color: var(--cream);
+    background: rgba(13, 12, 10, .28);
+}
+
 .history-note {
     margin-top: 10px;
     color: #9f9176;
@@ -1043,9 +1180,76 @@ footer img {
         columns: 2;
     }
 
-    .heats,
     .gauntlet-grid {
         grid-template-columns: 1fr;
+    }
+
+    .bracket-lanes {
+        grid-template-columns: 1fr;
+    }
+
+    .bracket-section {
+        padding-inline: 0;
+    }
+
+    .bracket-section>.section-heading {
+        margin-inline: 14px;
+    }
+
+    .bracket-lane {
+        padding-inline: 12px;
+    }
+
+    .bracket-round-nav {
+        margin: 0 0 12px;
+        padding-bottom: 4px;
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .bracket-round-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .bracket-round-nav button {
+        min-height: 36px;
+        flex: 0 0 auto;
+        padding: 7px 10px;
+        border: 1px solid #574321;
+        background: #211b14;
+        color: #aa9979;
+        font: 10px "Mario", Impact, sans-serif;
+        cursor: pointer;
+    }
+
+    .bracket-round-nav button[aria-current="true"] {
+        border-color: var(--green);
+        background: #19351f;
+        color: var(--cream);
+    }
+
+    .bracket-lane--losers .bracket-round-nav button[aria-current="true"] {
+        border-color: var(--amber);
+        background: #3a2b12;
+    }
+
+    .bracket-tree-scroll {
+        container-type: inline-size;
+        scroll-snap-type: x mandatory;
+        scroll-padding-inline: 2px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .bracket-tree {
+        --bracket-column-width: min(320px, 100cqi);
+        gap: 34px;
+    }
+
+    .bracket-round-column {
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
     }
 
     .podium {

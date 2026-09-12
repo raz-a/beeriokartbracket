@@ -78,8 +78,27 @@ pub struct PublicBracketRound {
 pub struct PublicBracketHeat {
     pub id: String,
     pub status: PublicHeatStatus,
+    #[serde(default)]
+    pub expected_size: usize,
     pub racers: Vec<String>,
     pub races: Vec<PublicRaceResult>,
+    #[serde(default)]
+    pub feeders: Vec<PublicBracketFeeder>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicBracketFeeder {
+    pub source_heat_id: String,
+    pub source: PublicFeederSource,
+    pub racer_count: usize,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicFeederSource {
+    Winners,
+    Losers,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,9 +303,44 @@ fn public_pools(view: &PoolView, results: Option<&PoolResultView>) -> PublicPool
 }
 
 fn public_bracket(view: &BracketView) -> PublicBracket {
+    let heat_ids: HashMap<_, _> = view
+        .winners
+        .iter()
+        .enumerate()
+        .flat_map(|(round_index, round)| {
+            round
+                .sets
+                .iter()
+                .enumerate()
+                .map(move |(heat_index, (id, _))| {
+                    (
+                        *id,
+                        public_bracket_heat_id("winners", round_index, heat_index),
+                    )
+                })
+        })
+        .chain(
+            view.losers
+                .iter()
+                .enumerate()
+                .flat_map(|(round_index, round)| {
+                    round
+                        .sets
+                        .iter()
+                        .enumerate()
+                        .map(move |(heat_index, (id, _))| {
+                            (
+                                *id,
+                                public_bracket_heat_id("losers", round_index, heat_index),
+                            )
+                        })
+                }),
+        )
+        .collect();
+
     PublicBracket {
-        winners: public_bracket_rounds(&view.winners, "winners", view.active_set),
-        losers: public_bracket_rounds(&view.losers, "losers", view.active_set),
+        winners: public_bracket_rounds(&view.winners, "winners", view.active_set, &heat_ids),
+        losers: public_bracket_rounds(&view.losers, "losers", view.active_set, &heat_ids),
         winners_finalists: view
             .winners_finalists
             .iter()
@@ -304,6 +358,7 @@ fn public_bracket_rounds(
     rounds: &[BracketRoundView],
     side: &str,
     active_set: Option<BracketSetId>,
+    heat_ids: &HashMap<BracketSetId, String>,
 ) -> Vec<PublicBracketRound> {
     rounds
         .iter()
@@ -333,8 +388,9 @@ fn public_bracket_rounds(
                         PublicHeatStatus::Waiting
                     };
                     PublicBracketHeat {
-                        id: format!("{side}-{}-{}", round_index + 1, heat_index + 1),
+                        id: public_bracket_heat_id(side, round_index, heat_index),
                         status,
+                        expected_size: heat.expected_size,
                         racers: heat
                             .racers
                             .iter()
@@ -349,11 +405,36 @@ fn public_bracket_rounds(
                                 public_race_result(format!("Race {}", race_index + 1), race)
                             })
                             .collect(),
+                        feeders: heat
+                            .feeders
+                            .iter()
+                            .filter_map(|feeder| {
+                                heat_ids.get(&feeder.set_id).map(|source_heat_id| {
+                                    PublicBracketFeeder {
+                                        source_heat_id: source_heat_id.clone(),
+                                        source: match feeder.source {
+                                            crate::bracket::FeederSource::Winners => {
+                                                PublicFeederSource::Winners
+                                            }
+                                            crate::bracket::FeederSource::Losers => {
+                                                PublicFeederSource::Losers
+                                            }
+                                        },
+                                        racer_count: feeder.racer_count,
+                                        resolved: feeder.is_resolved,
+                                    }
+                                })
+                            })
+                            .collect(),
                     }
                 })
                 .collect(),
         })
         .collect()
+}
+
+fn public_bracket_heat_id(side: &str, round_index: usize, heat_index: usize) -> String {
+    format!("{side}-{}-{}", round_index + 1, heat_index + 1)
 }
 
 fn active_bracket_race(view: &BracketView) -> Option<PublicActiveRace> {

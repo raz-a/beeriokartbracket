@@ -421,10 +421,36 @@ mod tests {
         tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
         let bracket = tournament.public_snapshot("Test Cup", 9, 1236);
         assert!(bracket.active_race.is_some());
-        assert!(matches!(
-            bracket.tournament,
-            PublicTournamentPhase::Bracket(_)
-        ));
+        let PublicTournamentPhase::Bracket(bracket_state) = bracket.tournament else {
+            panic!("expected public bracket state");
+        };
+        let heat_ids: std::collections::HashSet<_> = bracket_state
+            .winners
+            .iter()
+            .chain(&bracket_state.losers)
+            .flat_map(|round| round.heats.iter().map(|heat| heat.id.as_str()))
+            .collect();
+        assert!(
+            bracket_state
+                .winners
+                .iter()
+                .chain(&bracket_state.losers)
+                .flat_map(|round| &round.heats)
+                .all(|heat| heat.expected_size > 0)
+        );
+        let feeders: Vec<_> = bracket_state
+            .winners
+            .iter()
+            .chain(&bracket_state.losers)
+            .flat_map(|round| &round.heats)
+            .flat_map(|heat| &heat.feeders)
+            .collect();
+        assert!(!feeders.is_empty());
+        assert!(
+            feeders
+                .iter()
+                .all(|feeder| heat_ids.contains(feeder.source_heat_id.as_str()))
+        );
 
         tournament.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
             racers[..4].to_vec(),

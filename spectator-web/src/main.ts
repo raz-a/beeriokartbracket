@@ -57,8 +57,15 @@ interface PoolsState {
 interface BracketHeat {
   id: string;
   status: HeatStatus;
+  expected_size?: number;
   racers: string[];
   races: Race[];
+  feeders?: Array<{
+    source_heat_id: string;
+    source: "winners" | "losers";
+    racer_count: number;
+    resolved: boolean;
+  }>;
 }
 
 interface BracketRound {
@@ -111,7 +118,7 @@ let snapshot: Snapshot | null = null;
 let loadError: string | null = null;
 let loading = false;
 let hasRequestedSnapshot = false;
-let bracketSide: "winners" | "losers" = "winners";
+let bracketResizeObserver: ResizeObserver | null = null;
 
 function escapeHtml(value: unknown): string {
   return String(value)
@@ -253,43 +260,120 @@ function renderPools(state: PoolsState): string {
 }
 
 function renderBracket(state: BracketState): string {
-  const rounds = state[bracketSide];
-  const finalists = bracketSide === "winners" ? state.winners_finalists : state.losers_finalists;
   return `
     <section class="section-block bracket-section">
       <div class="section-heading">
         <div><p class="eyebrow">Bracket</p><h2>Road to the gauntlet</h2></div>
         ${icon("trophy")}
       </div>
-      <div class="segment" role="group" aria-label="Bracket side">
-        <button data-side="winners" class="${bracketSide === "winners" ? "active" : ""}">Winners</button>
-        <button data-side="losers" class="${bracketSide === "losers" ? "active" : ""}">Losers</button>
+      <div class="bracket-lanes">
+        ${renderBracketLane("Winners bracket", state.winners, state.winners_finalists, "winners")}
+        ${renderBracketLane("Losers bracket", state.losers, state.losers_finalists, "losers")}
       </div>
-      <div class="rounds">
-        ${rounds.map(renderRound).join("")}
+    </section>`;
+}
+
+function renderBracketLane(
+  heading: string,
+  rounds: BracketRound[],
+  finalists: string[],
+  side: "winners" | "losers",
+): string {
+  return `
+    <section class="bracket-lane bracket-lane--${side}" aria-labelledby="${side}-bracket-heading">
+      <h3 id="${side}-bracket-heading">${heading}</h3>
+      <nav class="bracket-round-nav" aria-label="${heading} rounds">
+        ${rounds.map((round, index) => `<button type="button" data-round-index="${index}" ${index === 0 ? 'aria-current="true"' : ""}>${escapeHtml(bracketRoundLabel(round, index, side, rounds.length))}</button>`).join("")}
+      </nav>
+      <div class="bracket-tree-scroll">
+        <div class="bracket-tree" data-bracket-side="${side}">
+          <svg class="bracket-connectors" aria-hidden="true"></svg>
+          ${rounds.map((round, index) => renderBracketRound(round, index, side, rounds.length)).join("")}
+        </div>
       </div>
       ${finalists.length ? `<div class="finalists"><p class="eyebrow">Finalists secured</p>${finalists.map((name) => `<strong>${escapeHtml(name)}</strong>`).join("")}</div>` : ""}
     </section>`;
 }
 
-function renderRound(round: BracketRound, index: number): string {
+function renderBracketRound(
+  round: BracketRound,
+  index: number,
+  side: "winners" | "losers",
+  roundCount: number,
+): string {
+  const label = bracketRoundLabel(round, index, side, roundCount);
   return `
-    <details class="round" ${round.heats.some((heat) => heat.status === "active") || index === 0 ? "open" : ""}>
-      <summary><span>${escapeHtml(round.label)}</span><small>${round.heats.length} ${round.heats.length === 1 ? "heat" : "heats"}</small></summary>
-      <div class="heats">
-        ${round.heats
-          .map(
-            (heat, heatIndex) => `<article class="heat heat--${heat.status}">
-              <header><strong>Heat ${heatIndex + 1}</strong><span class="status status--${heat.status}">${heat.status}</span></header>
-              ${heat.racers.length
-                ? `<ul>${heat.racers.map((name) => `<li>${escapeHtml(name)}</li>`).join("")}</ul>`
-                : `<p class="waiting">Awaiting feeder results</p>`}
-              ${heat.races.length ? `<p class="race-count">${heat.races.length} ${heat.races.length === 1 ? "race" : "races"} complete</p>` : ""}
-            </article>`,
-          )
-          .join("")}
+    <section class="bracket-round-column" data-round-index="${index}">
+      <header class="bracket-round-heading">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${round.heats.length} ${round.heats.length === 1 ? "heat" : "heats"}</span>
+      </header>
+      <div class="bracket-round-heats">
+        ${round.heats.map(renderBracketHeat).join("")}
+      </div>
+    </section>`;
+}
+
+function bracketRoundLabel(
+  round: BracketRound,
+  index: number,
+  side: "winners" | "losers",
+  roundCount: number,
+): string {
+  return side === "winners" && index === roundCount - 1
+    ? "Gauntlet Qualifiers"
+    : round.label;
+}
+
+function renderBracketHeat(heat: BracketHeat, heatIndex: number): string {
+  const expectedSize = Math.max(heat.expected_size ?? heat.racers.length, heat.racers.length);
+  const placeholders = (heat.feeders ?? [])
+    .filter((feeder) => !feeder.resolved)
+    .flatMap((feeder) => Array.from({ length: feeder.racer_count }, () => ({
+      label: `${feeder.source === "winners" ? "Winner" : "Loser"} from ${heatLabel(feeder.source_heat_id)}`,
+      source: feeder.source,
+    })));
+  while (heat.racers.length + placeholders.length < expectedSize) {
+    placeholders.push({ label: "Awaiting racer", source: "winners" });
+  }
+
+  return `
+    <article class="bracket-heat heat--${heat.status}" data-heat-id="${escapeHtml(heat.id)}" data-feeders="${escapeHtml((heat.feeders ?? []).map((feeder) => feeder.source_heat_id).join(","))}">
+      <header>
+        <strong>Heat ${heatIndex + 1}</strong>
+        <span class="status status--${heat.status}">${heat.status}</span>
+      </header>
+      <ol class="bracket-roster">
+        ${heat.racers.map((name, index) => `<li><span class="tree-marker">•</span><strong class="player-color--${index % 8}">${escapeHtml(name)}</strong></li>`).join("")}
+        ${placeholders.map((placeholder) => `<li class="feeder-slot feeder-slot--${placeholder.source}"><span class="tree-marker">${placeholder.source === "winners" ? "W" : "L"}</span><span>${escapeHtml(placeholder.label)}</span></li>`).join("")}
+      </ol>
+      ${renderHeatResults(heat)}
+    </article>`;
+}
+
+function renderHeatResults(heat: BracketHeat): string {
+  if (heat.races.length === 0) return "";
+  const racers = heat.racers.length > 0
+    ? heat.racers
+    : heat.races[0]?.racers.map((racer) => racer.racer_name) ?? [];
+  return `
+    <details class="heat-results" open>
+      <summary>${heat.races.length} ${heat.races.length === 1 ? "race" : "races"} recorded</summary>
+      <div class="heat-results-scroll">
+        <table style="width: ${88 + heat.races.length * 38}px">
+          <thead><tr><th>Racer</th>${heat.races.map((race, index) => `<th title="${escapeHtml(race.label)} · ${rulesetLabel(race.ruleset)}">${race.ruleset === "beerio" ? "B" : "R"}${index + 1}</th>`).join("")}</tr></thead>
+          <tbody>${racers.map((name) => `<tr><td>${escapeHtml(name)}</td>${heat.races.map((race) => {
+            const result = race.racers.find((racer) => racer.racer_name === name);
+            return `<td>${placementLabel(result?.placement ?? null)}</td>`;
+          }).join("")}</tr>`).join("")}</tbody>
+        </table>
       </div>
     </details>`;
+}
+
+function heatLabel(id: string): string {
+  const match = /^(winners|losers)-(\d+)-(\d+)$/.exec(id);
+  return match ? `${match[1] === "winners" ? "W" : "L"}${match[2]} H${match[3]}` : id;
 }
 
 function renderGauntlet(state: GauntletState): string {
@@ -409,10 +493,83 @@ function render(): void {
 
   activateIcons();
   document.querySelector("#refresh")?.addEventListener("click", () => void refresh());
-  document.querySelectorAll<HTMLButtonElement>("[data-side]").forEach((button) => {
-    button.addEventListener("click", () => {
-      bracketSide = button.dataset.side as "winners" | "losers";
-      render();
+  initializeBracketTrees();
+}
+
+function initializeBracketTrees(): void {
+  bracketResizeObserver?.disconnect();
+  const trees = document.querySelectorAll<HTMLElement>(".bracket-tree");
+  if (trees.length === 0) return;
+
+  const redraw = () => requestAnimationFrame(drawBracketConnections);
+  bracketResizeObserver = new ResizeObserver(redraw);
+  trees.forEach((tree) => bracketResizeObserver?.observe(tree));
+  document.querySelectorAll<HTMLElement>(".bracket-lane").forEach((lane) => {
+    const scroller = lane.querySelector<HTMLElement>(".bracket-tree-scroll");
+    const navigation = lane.querySelector<HTMLElement>(".bracket-round-nav");
+    const rounds = [...lane.querySelectorAll<HTMLElement>(".bracket-round-column")];
+    const buttons = [...lane.querySelectorAll<HTMLButtonElement>(".bracket-round-nav button")];
+    if (!scroller || rounds.length === 0) return;
+
+    const updateCurrentRound = () => {
+      const currentIndex = rounds.reduce((closestIndex, round, index) =>
+        Math.abs(round.offsetLeft - scroller.scrollLeft)
+          < Math.abs(rounds[closestIndex].offsetLeft - scroller.scrollLeft)
+          ? index
+          : closestIndex, 0);
+      buttons.forEach((button, index) => {
+        if (index === currentIndex) button.setAttribute("aria-current", "true");
+        else button.removeAttribute("aria-current");
+      });
+      const currentButton = buttons[currentIndex];
+      if (navigation && currentButton) {
+        const navigationRect = navigation.getBoundingClientRect();
+        const buttonRect = currentButton.getBoundingClientRect();
+        const buttonLeft = navigation.scrollLeft + buttonRect.left - navigationRect.left;
+        navigation.scrollTo({ left: Math.max(0, buttonLeft - 8), behavior: "smooth" });
+      }
+    };
+    buttons.forEach((button, index) => {
+      button.addEventListener("click", () => {
+        scroller.scrollTo({ left: rounds[index].offsetLeft, behavior: "smooth" });
+      });
+    });
+    scroller.addEventListener("scroll", updateCurrentRound, { passive: true });
+  });
+  document.querySelectorAll<HTMLDetailsElement>(".heat-results").forEach((details) => {
+    details.addEventListener("toggle", redraw);
+  });
+  redraw();
+}
+
+function drawBracketConnections(): void {
+  document.querySelectorAll<HTMLElement>(".bracket-tree").forEach((tree) => {
+    const svg = tree.querySelector<SVGSVGElement>(".bracket-connectors");
+    if (!svg) return;
+    const treeRect = tree.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${tree.scrollWidth} ${tree.scrollHeight}`);
+    svg.replaceChildren();
+
+    const heats = new Map(
+      [...tree.querySelectorAll<HTMLElement>(".bracket-heat")]
+        .map((heat) => [heat.dataset.heatId, heat] as const),
+    );
+    heats.forEach((target) => {
+      const feederIds = target.dataset.feeders?.split(",").filter(Boolean) ?? [];
+      feederIds.forEach((feederId) => {
+        const source = heats.get(feederId);
+        if (!source) return;
+        const sourceRect = source.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const startX = sourceRect.right - treeRect.left;
+        const startY = sourceRect.top + sourceRect.height / 2 - treeRect.top;
+        const endX = targetRect.left - treeRect.left;
+        const endY = targetRect.top + targetRect.height / 2 - treeRect.top;
+        const middleX = startX + (endX - startX) / 2;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", `M ${startX} ${startY} H ${middleX} V ${endY} H ${endX}`);
+        svg.append(path);
+      });
     });
   });
 }

@@ -1,18 +1,20 @@
 {
-  "name": "beeriokartbracket-spectator",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "tsc && vite build",
-    "dev": "vite",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "lucide": "latest"
-  },
-  "devDependencies": {
-    "typescript": "latest",
-    "vite": "latest"
-  }
+    "name": "beeriokartbracket-spectator",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc && vite build",
+        "deploy": "npm run build && wrangler deploy",
+        "dev": "vite",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "lucide": "latest"
+    },
+    "devDependencies": {
+        "typescript": "latest",
+        "vite": "latest",
+        "wrangler": "4.131.1"
+    }
 }

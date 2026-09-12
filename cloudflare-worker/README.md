@@ -22,3 +22,18 @@ npx wrangler dev --var PUBLISH_TOKEN:local-development-token
 
 Local KV data is maintained by Wrangler. `PUBLISH_TOKEN` is a local variable;
 the deployed value will be configured as a Cloudflare secret.
+
+## Desktop publisher
+
+The GUI publishes automatically after each successful local save when
+`BEERIOKART_PUBLISH_TOKEN` is present in its environment. The deployed endpoint
+is the default. Override it for local development with
+`BEERIOKART_PUBLISH_URL`.
+
+```powershell
+$env:BEERIOKART_PUBLISH_TOKEN = "the-same-value-stored-by-wrangler"
+cargo run
+```
+
+Do not commit the token. Publication failures do not block local saves or
+tournament actions; the GUI reports them separately.

@@ -1,4 +1,5 @@
 mod persistence;
+mod publishing;
 
 use std::collections::HashMap;
 use std::num::NonZero;
@@ -14,6 +15,7 @@ use eframe::egui;
 use rand::seq::SliceRandom;
 
 use crate::persistence::FileSession;
+use crate::publishing::{PublishStatus, Publisher};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -87,6 +89,7 @@ struct TournamentApp {
     error: Option<String>,
     show_save_failure: bool,
     allow_unsaved_exit: bool,
+    publisher: Publisher,
     logo: Option<egui::TextureHandle>,
     background: Option<egui::TextureHandle>,
 }
@@ -115,6 +118,7 @@ impl Default for TournamentApp {
             error: None,
             show_save_failure: false,
             allow_unsaved_exit: false,
+            publisher: Publisher::default(),
             logo: None,
             background: None,
         }
@@ -135,6 +139,16 @@ impl TournamentApp {
 
 impl eframe::App for TournamentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.publisher.poll();
+        if self.publisher.status() == &PublishStatus::Publishing {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        let publishing = self.publisher.status() == &PublishStatus::Publishing;
+        let publishing_disabled = self.publisher.status() == &PublishStatus::Disabled;
+        let publication_error = match self.publisher.status() {
+            PublishStatus::Failed(error) => Some(error.clone()),
+            _ => None,
+        };
         let view = self.tournament.view();
         let mut action: Option<Action> = None;
         let mut file_action: Option<FileAction> = None;
@@ -204,6 +218,38 @@ impl eframe::App for TournamentApp {
                             .clicked()
                     {
                         self.show_save_failure = true;
+                    }
+                    if let Some(error) = &publication_error {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Publish failed")
+                                        .color(ui.visuals().error_fg_color),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text(error)
+                            .clicked()
+                        {
+                            self.error = Some(error.clone());
+                        }
+                    } else if publishing {
+                        ui.label(egui::RichText::new("Publishing...").color(AMBER));
+                    } else if publishing_disabled
+                        && ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Publishing off").color(AMBER),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Publishing requires BEERIOKART_PUBLISH_TOKEN")
+                            .clicked()
+                    {
+                        self.error = Some(
+                            "Set BEERIOKART_PUBLISH_TOKEN before starting the app, then restart it."
+                                .to_owned(),
+                        );
                     }
                     if let Some(session) = &self.file_session {
                         ui.label(session.path().display().to_string());
@@ -413,6 +459,7 @@ impl TournamentApp {
                         } else {
                             "Tournament opened.".to_owned()
                         };
+                        self.publish_current();
                     }
                     Err(error) => self.error = Some(error.to_string()),
                 }
@@ -431,6 +478,7 @@ impl TournamentApp {
                         self.clear_transient_state();
                         self.sync_config_from_tournament();
                         self.status = "Tournament created.".to_owned();
+                        self.publish_current();
                     }
                     Err(error) => self.error = Some(error.to_string()),
                 }
@@ -448,6 +496,8 @@ impl TournamentApp {
                     self.tournament_name = name;
                     if session.save(&self.tournament).is_err() {
                         self.show_save_failure = true;
+                    } else {
+                        self.publish_current();
                     }
                 }
             }
@@ -481,6 +531,11 @@ impl TournamentApp {
         self.allow_unsaved_exit = false;
     }
 
+    fn publish_current(&mut self) {
+        self.publisher
+            .publish(&self.tournament_name, &self.tournament);
+    }
+
     fn sync_config_from_tournament(&mut self) {
         let TournamentView::Registration(registration) = self.tournament.view() else {
             return;
@@ -506,6 +561,7 @@ impl TournamentApp {
         };
 
         let mut open = true;
+        let mut publish_after_retry = false;
         egui::Window::new("Tournament not saved")
             .collapsible(false)
             .resizable(false)
@@ -523,6 +579,7 @@ impl TournamentApp {
                     {
                         self.show_save_failure = false;
                         self.status = "Tournament saved.".to_owned();
+                        publish_after_retry = true;
                     }
                     if ui.button("Exit Without Saving").clicked() {
                         self.allow_unsaved_exit = true;
@@ -536,6 +593,9 @@ impl TournamentApp {
 
         if !open {
             self.show_save_failure = false;
+        }
+        if publish_after_retry {
+            self.publish_current();
         }
     }
 
@@ -1208,6 +1268,7 @@ impl TournamentApp {
                     self.show_save_failure = true;
                     return;
                 }
+                self.publish_current();
                 self.status = message;
             }
             Err(e) => {

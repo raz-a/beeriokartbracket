@@ -7,6 +7,7 @@ use crate::gauntlet::Gauntlet;
 use crate::participant::{Participant, ParticipantId, ParticipantMap, ParticipantView};
 use crate::persistence::PersistedState;
 use crate::pool::Pool;
+use crate::publication::PublicTournamentSnapshot;
 use crate::race::{Race, RaceId};
 use crate::view::{RegistrationView, TournamentResultView, TournamentView, Viewable};
 use crate::{BracketSetId, Placement};
@@ -137,6 +138,20 @@ impl Tournament {
 
     pub fn view(&self) -> TournamentView {
         Viewable::view(self, &self.participants)
+    }
+
+    pub fn public_snapshot(
+        &self,
+        tournament_name: &str,
+        revision: u64,
+        published_at_unix_ms: u64,
+    ) -> PublicTournamentSnapshot {
+        PublicTournamentSnapshot::from_view(
+            tournament_name,
+            revision,
+            published_at_unix_ms,
+            self.view(),
+        )
     }
 
     // Registration Functions
@@ -296,7 +311,10 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::{PersistenceError, deserialize_tournament, serialize_tournament};
+    use crate::{
+        PersistenceError, PublicStandingStatus, PublicTournamentPhase, deserialize_tournament,
+        serialize_tournament,
+    };
 
     fn round_trip(tournament: &Tournament) -> Tournament {
         let json = serialize_tournament("Test Cup", tournament).unwrap();
@@ -342,6 +360,114 @@ mod tests {
         assert_eq!(results[0].participant.name, "Player 1");
         assert_eq!(results[0].placement.placement(), 1);
         assert!(matches!(tournament.next_phase(), Ok(())));
+    }
+
+    #[test]
+    fn public_snapshot_covers_every_phase_and_preserves_active_racer_order() {
+        let mut tournament = Tournament::default();
+        let racers: Vec<_> = (1..=16)
+            .map(|number| {
+                tournament
+                    .participants
+                    .insert(Participant::new(&format!("Player {number}")))
+            })
+            .collect();
+
+        let registration = tournament.public_snapshot("Test Cup", 7, 1234);
+        assert_eq!(registration.revision, 7);
+        assert_eq!(registration.published_at_unix_ms, 1234);
+        assert_eq!(registration.tournament_name, "Test Cup");
+        assert!(registration.active_race.is_none());
+        assert!(matches!(
+            registration.tournament,
+            PublicTournamentPhase::Registration(_)
+        ));
+
+        tournament.next_phase().unwrap();
+        tournament.advance_pools().unwrap();
+        let expected_pool_order: Vec<_> = match tournament.view() {
+            TournamentView::Pools((pool, _)) => pool
+                .current_race
+                .unwrap()
+                .racers
+                .into_iter()
+                .map(|(participant, _)| participant.name)
+                .collect(),
+            _ => panic!("expected pools view"),
+        };
+        let pools = tournament.public_snapshot("Test Cup", 8, 1235);
+        assert_eq!(
+            pools
+                .active_race
+                .as_ref()
+                .unwrap()
+                .racers
+                .iter()
+                .map(|racer| racer.racer_name.clone())
+                .collect::<Vec<_>>(),
+            expected_pool_order
+        );
+        let PublicTournamentPhase::Pools(pool_state) = pools.tournament else {
+            panic!("expected public pools state");
+        };
+        assert_eq!(pool_state.standings.len(), 16);
+        assert!(
+            pool_state
+                .standings
+                .iter()
+                .all(|standing| standing.status == PublicStandingStatus::Racing)
+        );
+
+        tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
+        let bracket = tournament.public_snapshot("Test Cup", 9, 1236);
+        assert!(bracket.active_race.is_some());
+        assert!(matches!(
+            bracket.tournament,
+            PublicTournamentPhase::Bracket(_)
+        ));
+
+        tournament.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
+            racers[..4].to_vec(),
+            racers[4..8].to_vec(),
+            NonZero::new(3).unwrap(),
+        )));
+        tournament.advance_gauntlet().unwrap();
+        let expected_gauntlet_order: Vec<_> = match tournament.view() {
+            TournamentView::Gauntlet(gauntlet) => gauntlet.races[0]
+                .racers
+                .iter()
+                .map(|(participant, _)| participant.name.clone())
+                .collect(),
+            _ => panic!("expected gauntlet view"),
+        };
+        let gauntlet = tournament.public_snapshot("Test Cup", 10, 1237);
+        assert_eq!(
+            gauntlet
+                .active_race
+                .as_ref()
+                .unwrap()
+                .racers
+                .iter()
+                .map(|racer| racer.racer_name.clone())
+                .collect::<Vec<_>>(),
+            expected_gauntlet_order
+        );
+        assert!(matches!(
+            gauntlet.tournament,
+            PublicTournamentPhase::Gauntlet(_)
+        ));
+
+        tournament.phase = TournamentPhase::Complete(vec![
+            (racers[1], Placement::new(2).unwrap()),
+            (racers[0], Placement::new(1).unwrap()),
+        ]);
+        let complete = tournament.public_snapshot("Test Cup", 11, 1238);
+        assert!(complete.active_race.is_none());
+        let PublicTournamentPhase::Complete(results) = complete.tournament else {
+            panic!("expected public complete state");
+        };
+        assert_eq!(results[0].racer_name, "Player 1");
+        assert_eq!(results[1].racer_name, "Player 2");
     }
 
     #[test]

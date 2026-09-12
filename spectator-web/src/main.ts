@@ -10,7 +10,9 @@ import {
   Users,
   WifiOff,
 } from "lucide";
+import { marked } from "marked";
 
+import rulesMarkdown from "../../docs/Rules_Brackets.md?raw";
 import "./style.css";
 
 const SNAPSHOT_URL =
@@ -123,6 +125,30 @@ function escapeHtml(value: unknown): string {
 function icon(name: string, label?: string): string {
   const aria = label ? `aria-label="${escapeHtml(label)}"` : "aria-hidden=\"true\"";
   return `<i data-lucide="${name}" ${aria}></i>`;
+}
+
+function renderNavigation(activePage: "live" | "rules"): string {
+  return `
+    <nav class="site-nav" aria-label="Tournament pages">
+      <a href="/" class="${activePage === "live" ? "active" : ""}">Live</a>
+      <a href="/rules" class="${activePage === "rules" ? "active" : ""}">Rules</a>
+    </nav>`;
+}
+
+function renderRulesPage(): void {
+  document.title = "Tournament Rules | Beerio Kart Invitational";
+  applicationRoot.innerHTML = `
+    <header class="site-header">
+      <div class="header-inner">
+        <img src="/assets/beerio_kart_logo.png" alt="Beerio Kart Invitational" />
+        <div class="event-title"><p>Official tournament guide</p><h1>Rules</h1></div>
+        <div class="header-actions">${renderNavigation("rules")}</div>
+      </div>
+    </header>
+    <div class="rules-shell">
+      <article class="rules-document">${marked.parse(rulesMarkdown, { async: false })}</article>
+    </div>
+    <footer><img src="/assets/beerio_kart_logo.png" alt="" /><p>Northwest Beerio Kart Invitational</p></footer>`;
 }
 
 function phaseLabel(phase: TournamentPhase["phase"]): string {
@@ -337,7 +363,7 @@ function render(): void {
     return;
   }
   if (!snapshot) {
-    applicationRoot.innerHTML = `<div class="center-state error-state">${icon("wifi-off")}<strong>No live tournament yet</strong><p>${escapeHtml(loadError ?? "Check back shortly.")}</p><button id="retry">${icon("refresh-cw")} Retry</button></div>`;
+    applicationRoot.innerHTML = `<div class="center-state error-state">${icon("wifi-off")}<strong>No live tournament yet</strong><p>${escapeHtml(loadError ?? "Check back shortly.")}</p><button id="retry">${icon("refresh-cw")} Retry</button><a class="state-link" href="/rules">View tournament rules</a></div>`;
     activateIcons();
     document.querySelector("#retry")?.addEventListener("click", () => void refresh());
     return;
@@ -350,7 +376,10 @@ function render(): void {
       <div class="header-inner">
         <img src="/assets/beerio_kart_logo.png" alt="Beerio Kart Invitational" />
         <div class="event-title"><p>${escapeHtml(phaseLabel(snapshot.tournament.phase))}</p><h1>${escapeHtml(snapshot.tournament_name)}</h1></div>
-        <button class="icon-button ${loading ? "spinning" : ""}" id="refresh" title="Refresh tournament" aria-label="Refresh tournament">${icon("refresh-cw")}</button>
+        <div class="header-actions">
+          ${renderNavigation("live")}
+          <button class="icon-button ${loading ? "spinning" : ""}" id="refresh" title="Refresh tournament" aria-label="Refresh tournament">${icon("refresh-cw")}</button>
+        </div>
       </div>
     </header>
     <div class="update-bar ${loadError || stale ? "update-bar--warning" : ""}">
@@ -405,12 +434,16 @@ async function refresh(): Promise<void> {
   }
 }
 
-setInterval(() => {
-  if (document.visibilityState === "visible") void refresh();
-}, REFRESH_INTERVAL_MS);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") void refresh();
-});
+if (window.location.pathname.replace(/\/+$/, "") === "/rules") {
+  renderRulesPage();
+} else {
+  setInterval(() => {
+    if (document.visibilityState === "visible") void refresh();
+  }, REFRESH_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refresh();
+  });
 
-render();
-void refresh();
+  render();
+  void refresh();
+}

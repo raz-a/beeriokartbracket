@@ -9,6 +9,8 @@ npm run dev
 
 The production build uses the deployed Worker endpoint. Set
 `VITE_SNAPSHOT_URL` to use another `/snapshot` endpoint during development.
+The `/rules` route is generated directly from `docs/Rules_Brackets.md` during
+the production build.
 
 ## Deploy
 

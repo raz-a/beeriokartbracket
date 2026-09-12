@@ -1,0 +1,15 @@
+{
+  "$schema": "../cloudflare-worker/node_modules/wrangler/config-schema.json",
+  "name": "beeriokart-spectator",
+  "compatibility_date": "2026-09-12",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    {
+      "pattern": "beeriokart.win",
+      "custom_domain": true
+    }
+  ]
+}

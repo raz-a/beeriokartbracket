@@ -95,7 +95,7 @@ svg {
     margin: 0 auto;
     padding: 14px 24px;
     display: grid;
-    grid-template-columns: 250px 1fr 44px;
+    grid-template-columns: 250px 1fr auto;
     gap: 28px;
     align-items: center;
 }
@@ -124,6 +124,38 @@ svg {
     font-size: clamp(24px, 4vw, 42px);
     line-height: 1;
     overflow-wrap: anywhere;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.site-nav {
+    display: flex;
+    border: 1px solid #685024;
+}
+
+.site-nav a {
+    min-height: 42px;
+    display: grid;
+    place-items: center;
+    padding: 8px 13px;
+    color: #b9a985;
+    font: 12px "Mario", Impact, sans-serif;
+    text-decoration: none;
+}
+
+.site-nav a+a {
+    border-left: 1px solid #685024;
+}
+
+.site-nav a:hover,
+.site-nav a.active {
+    color: var(--ink);
+    background: var(--amber);
 }
 
 .icon-button {
@@ -193,6 +225,104 @@ svg {
     margin: 28px auto 64px;
     display: grid;
     gap: 24px;
+}
+
+.rules-hero {
+    min-height: 190px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 30px 20px;
+    text-align: center;
+    background: #132d19;
+    border-bottom: 4px solid var(--green);
+}
+
+.rules-hero h2 {
+    max-width: 800px;
+    color: var(--cream);
+    font-size: clamp(28px, 5vw, 48px);
+}
+
+.rules-shell {
+    width: min(880px, calc(100% - 40px));
+    margin: 38px auto 72px;
+}
+
+.rules-document {
+    color: #e7dcc2;
+    font-size: 18px;
+    line-height: 1.72;
+}
+
+.rules-document h1,
+.rules-document h2,
+.rules-document h3 {
+    color: var(--cream);
+    line-height: 1.15;
+}
+
+.rules-document h1 {
+    margin: 0 0 34px;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--line);
+    font-size: clamp(30px, 6vw, 48px);
+}
+
+.rules-document h2 {
+    margin: 54px 0 18px;
+    color: var(--amber);
+    font-size: clamp(24px, 4vw, 32px);
+}
+
+.rules-document h3 {
+    margin: 34px 0 14px;
+    font-size: clamp(20px, 3vw, 25px);
+}
+
+.rules-document p,
+.rules-document ul,
+.rules-document ol,
+.rules-document blockquote,
+.rules-document table {
+    margin: 0 0 20px;
+}
+
+.rules-document li+li {
+    margin-top: 7px;
+}
+
+.rules-document strong {
+    color: var(--cream);
+}
+
+.rules-document blockquote {
+    padding: 18px 22px;
+    border-left: 4px solid var(--green);
+    background: rgba(19, 45, 25, .85);
+    color: #cae4cc;
+}
+
+.rules-document blockquote>*:last-child {
+    margin-bottom: 0;
+}
+
+.rules-document table {
+    width: min(100%, 520px);
+    min-width: 0;
+    background: rgba(33, 27, 20, .96);
+    border: 1px solid #4d3b20;
+}
+
+.rules-document th,
+.rules-document td {
+    text-align: center;
+}
+
+.rules-document a {
+    color: var(--green);
 }
 
 .eyebrow {
@@ -707,6 +837,12 @@ tbody tr:nth-child(odd) {
     cursor: pointer;
 }
 
+.state-link {
+    color: var(--green);
+    font: 13px "Mario", Impact, sans-serif;
+    text-underline-offset: 4px;
+}
+
 .loader {
     width: 34px;
     height: 34px;
@@ -744,8 +880,21 @@ footer img {
     .header-inner {
         min-height: 84px;
         padding: 10px 16px;
-        grid-template-columns: 108px 1fr 40px;
+        grid-template-columns: 108px 1fr;
         gap: 12px;
+    }
+
+    .header-actions {
+        grid-column: 1 / -1;
+        justify-content: stretch;
+    }
+
+    .site-nav {
+        flex: 1;
+    }
+
+    .site-nav a {
+        flex: 1;
     }
 
     .header-inner>img {
@@ -784,6 +933,20 @@ footer img {
         width: min(100% - 20px, 620px);
         margin-top: 12px;
         gap: 12px;
+    }
+
+    .rules-hero {
+        min-height: 150px;
+    }
+
+    .rules-shell {
+        width: min(100% - 28px, 620px);
+        margin-block: 28px 52px;
+    }
+
+    .rules-document {
+        font-size: 16px;
+        line-height: 1.65;
     }
 
     .live-race,

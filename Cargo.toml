@@ -10,7 +10,7 @@ serde_json = "1.0"
 slotmap = { version = "1.1.1", features = ["serde"] }
 
 [workspace]
-members = ["gui"]
+members = ["gui", "obs-companion"]
 # The GUI is the default target so `cargo run` launches it. Bare `cargo
 # build/test/clippy` therefore also target the GUI; use `--workspace` (or
 # `-p beeriokartbracket`) to build/test/lint the library and its domain tests.

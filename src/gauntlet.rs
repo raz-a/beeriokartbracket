@@ -129,6 +129,18 @@ impl Gauntlet {
             .all(|(_, racer)| racer.placement.is_some())
     }
 
+    pub(crate) fn results(&self) -> Result<Vec<(ParticipantId, Placement)>, TournamentError> {
+        if !self.is_complete() {
+            return Err(TournamentError::GauntletNotCompleted);
+        }
+
+        Ok(self
+            .racers
+            .iter()
+            .map(|(id, info)| (*id, info.placement.unwrap()))
+            .collect())
+    }
+
     pub(crate) fn advance(&mut self) -> Result<bool, TournamentError> {
         // Reset racer state to recalculate.
         for racer in self.racers.values_mut() {

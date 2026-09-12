@@ -8,7 +8,7 @@ use crate::participant::{Participant, ParticipantId, ParticipantMap, Participant
 use crate::persistence::PersistedState;
 use crate::pool::Pool;
 use crate::race::{Race, RaceId};
-use crate::view::{RegistrationView, TournamentView, Viewable};
+use crate::view::{RegistrationView, TournamentResultView, TournamentView, Viewable};
 use crate::{BracketSetId, Placement};
 
 // TODO: Add ability to go back from states.
@@ -22,7 +22,7 @@ enum TournamentPhase {
     Pools(Box<Pool>),
     Bracket(Box<Bracket>),
     Gauntlet(Box<Gauntlet>),
-    _Complete,
+    Complete(Vec<(ParticipantId, Placement)>),
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -35,10 +35,19 @@ pub struct Tournament {
 impl PersistedState for Tournament {
     fn validate_loaded(&self, _context: &()) -> Result<(), &'static str> {
         match &self.phase {
-            TournamentPhase::Registration | TournamentPhase::_Complete => Ok(()),
+            TournamentPhase::Registration => Ok(()),
             TournamentPhase::Pools(pool) => pool.validate_loaded(&self.participants),
             TournamentPhase::Bracket(bracket) => bracket.validate_loaded(&self.participants),
             TournamentPhase::Gauntlet(gauntlet) => gauntlet.validate_loaded(&self.participants),
+            TournamentPhase::Complete(results) => {
+                if results
+                    .iter()
+                    .any(|(id, _)| !self.participants.contains_key(*id))
+                {
+                    return Err("complete results reference a missing participant");
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -119,14 +128,10 @@ impl Tournament {
                 Ok(())
             }
             TournamentPhase::Gauntlet(gauntlet) => {
-                if !gauntlet.is_complete() {
-                    return Err(TournamentError::GauntletNotCompleted);
-                }
-
-                self.phase = TournamentPhase::_Complete;
+                self.phase = TournamentPhase::Complete(gauntlet.results()?);
                 Ok(())
             }
-            TournamentPhase::_Complete => todo!(),
+            TournamentPhase::Complete(_) => Ok(()),
         }
     }
 
@@ -271,7 +276,17 @@ impl Viewable<TournamentView> for Tournament {
             TournamentPhase::Gauntlet(gauntlet) => {
                 TournamentView::Gauntlet(gauntlet.as_ref().view(id_map))
             }
-            TournamentPhase::_Complete => TournamentView::Complete,
+            TournamentPhase::Complete(results) => {
+                let mut results: Vec<_> = results
+                    .iter()
+                    .map(|&(id, placement)| TournamentResultView {
+                        participant: id.view(id_map),
+                        placement,
+                    })
+                    .collect();
+                results.sort_by_key(|result| result.placement.placement());
+                TournamentView::Complete(results)
+            }
         }
     }
 }
@@ -316,11 +331,17 @@ mod tests {
             TournamentView::Gauntlet(_)
         ));
 
-        tournament.phase = TournamentPhase::_Complete;
-        assert!(matches!(
-            round_trip(&tournament).view(),
-            TournamentView::Complete
-        ));
+        tournament.phase = TournamentPhase::Complete(vec![
+            (racers[1], Placement::new(2).unwrap()),
+            (racers[0], Placement::new(1).unwrap()),
+        ]);
+        let TournamentView::Complete(results) = round_trip(&tournament).view() else {
+            panic!("expected complete tournament view");
+        };
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].participant.name, "Player 1");
+        assert_eq!(results[0].placement.placement(), 1);
+        assert!(matches!(tournament.next_phase(), Ok(())));
     }
 
     #[test]
@@ -375,7 +396,11 @@ mod tests {
         assert!(tournament.advance_gauntlet().unwrap());
 
         tournament.next_phase().unwrap();
-        assert!(matches!(tournament.view(), TournamentView::Complete));
+        let TournamentView::Complete(results) = tournament.view() else {
+            panic!("expected complete tournament view");
+        };
+        assert_eq!(results[0].participant.id, racers[0]);
+        assert_eq!(results[0].placement.placement(), 1);
     }
 
     #[test]

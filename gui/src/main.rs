@@ -6,7 +6,8 @@ use std::num::NonZero;
 use beeriokartbracket::{
     BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, FeederSource,
     GauntletView, ParticipantId, ParticipantView, Placement, PoolResultView, PoolView, RaceId,
-    RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError, TournamentView,
+    RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError, TournamentResultView,
+    TournamentView,
 };
 use eframe::egui;
 #[cfg(feature = "manual-validation")]
@@ -187,20 +188,20 @@ impl eframe::App for TournamentApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let failed = self
+                    let save_failed = self
                         .file_session
                         .as_ref()
                         .is_some_and(|session| session.save_error().is_some());
-                    let text = if failed { "Save failed" } else { "Saved" };
-                    let color = if failed {
-                        ui.visuals().error_fg_color
-                    } else {
-                        ACTIVE_GREEN_BRIGHT
-                    };
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new(text).color(color)).frame(false))
-                        .clicked()
-                        && failed
+                    if save_failed
+                        && ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Save failed")
+                                        .color(ui.visuals().error_fg_color),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
                     {
                         self.show_save_failure = true;
                     }
@@ -297,9 +298,7 @@ impl eframe::App for TournamentApp {
                 TournamentView::Gauntlet(gauntlet) => {
                     gauntlet_ui(ui, gauntlet, &mut self.gauntlet_edits, &mut action)
                 }
-                TournamentView::Complete => {
-                    ui.label("The tournament is complete.");
-                }
+                TournamentView::Complete(results) => complete_ui(ui, &results),
             });
         });
 
@@ -2333,6 +2332,135 @@ fn gauntlet_ui(
     }
 }
 
+fn complete_ui(ui: &mut egui::Ui, results: &[TournamentResultView]) {
+    banner(ui, "Final Results", 24.0);
+    ui.add_space(24.0);
+
+    if results.is_empty() {
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("No final results recorded.").color(CREAM));
+        });
+        return;
+    }
+
+    let gold = egui::Color32::from_rgb(0xF4, 0xC4, 0x30);
+    let silver = egui::Color32::from_rgb(0xC8, 0xD0, 0xD8);
+    let bronze = egui::Color32::from_rgb(0xC9, 0x7A, 0x40);
+
+    if results.len() >= 3 && ui.available_width() >= 720.0 {
+        ui.columns(3, |columns| {
+            columns[0].add_space(34.0);
+            podium_card(&mut columns[0], &results[1], "RUNNER-UP", silver, false);
+            podium_card(&mut columns[1], &results[0], "CHAMPION", gold, true);
+            columns[2].add_space(34.0);
+            podium_card(&mut columns[2], &results[2], "THIRD PLACE", bronze, false);
+        });
+    } else {
+        podium_card(ui, &results[0], "CHAMPION", gold, true);
+        for (result, title, color) in results
+            .iter()
+            .skip(1)
+            .take(2)
+            .zip(["RUNNER-UP", "THIRD PLACE"])
+            .zip([silver, bronze])
+            .map(|((result, title), color)| (result, title, color))
+        {
+            ui.add_space(10.0);
+            podium_card(ui, result, title, color, false);
+        }
+    }
+
+    let remaining = results.get(3..).unwrap_or_default();
+    if remaining.is_empty() {
+        return;
+    }
+
+    ui.add_space(28.0);
+    banner(ui, "Final Standings", 20.0);
+    ui.add_space(10.0);
+    egui::Frame::none()
+        .fill(CARD_BG)
+        .stroke(egui::Stroke::new(1.0_f32, AMBER))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(16.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width().min(560.0));
+            egui::Grid::new("complete_results_table")
+                .num_columns(2)
+                .striped(true)
+                .spacing([28.0, 12.0])
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Place")
+                            .color(ACTIVE_GREEN_BRIGHT)
+                            .font(title_font(17.0)),
+                    );
+                    ui.label(
+                        egui::RichText::new("Racer")
+                            .color(ACTIVE_GREEN_BRIGHT)
+                            .font(title_font(17.0)),
+                    );
+                    ui.end_row();
+
+                    for result in remaining {
+                        ui.label(
+                            egui::RichText::new(placement_label(result.placement))
+                                .color(AMBER)
+                                .font(title_font(18.0)),
+                        );
+                        ui.label(
+                            egui::RichText::new(&result.participant.name)
+                                .color(CREAM)
+                                .size(18.0),
+                        );
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn podium_card(
+    ui: &mut egui::Ui,
+    result: &TournamentResultView,
+    title: &str,
+    accent: egui::Color32,
+    champion: bool,
+) {
+    egui::Frame::none()
+        .fill(if champion {
+            egui::Color32::from_rgb(0x1D, 0x38, 0x21)
+        } else {
+            CARD_BG
+        })
+        .stroke(egui::Stroke::new(
+            if champion { 2.0_f32 } else { 1.0_f32 },
+            accent,
+        ))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::symmetric(16.0, 18.0))
+        .show(ui, |ui| {
+            ui.set_min_height(if champion { 156.0 } else { 122.0 });
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new(placement_label(result.placement))
+                        .color(accent)
+                        .font(title_font(if champion { 36.0 } else { 28.0 })),
+                );
+                ui.label(
+                    egui::RichText::new(title)
+                        .color(accent)
+                        .font(title_font(14.0)),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(&result.participant.name)
+                        .color(CREAM)
+                        .font(title_font(if champion { 24.0 } else { 20.0 })),
+                );
+            });
+        });
+}
+
 fn round_title(index: usize, round: &BracketRoundView, is_losers: bool) -> String {
     match (is_losers, round.from_wb_round) {
         (_, Some(wb)) => format!("Intake · W{}", wb + 1),
@@ -2718,7 +2846,7 @@ fn phase_name(view: &TournamentView) -> &'static str {
         TournamentView::Pools(_) => "Pools",
         TournamentView::Bracket(_) => "Bracket",
         TournamentView::Gauntlet(_) => "Grand Finals Gauntlet",
-        TournamentView::Complete => "Complete",
+        TournamentView::Complete(_) => "Complete",
     }
 }
 

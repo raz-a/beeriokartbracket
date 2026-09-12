@@ -1,3 +1,4 @@
+use crate::Placement;
 use crate::bracket::BracketView;
 use crate::config::Config;
 use crate::gauntlet::GauntletView;
@@ -15,10 +16,16 @@ pub struct RegistrationView {
 }
 
 #[derive(Debug)]
+pub struct TournamentResultView {
+    pub participant: ParticipantView,
+    pub placement: Placement,
+}
+
+#[derive(Debug)]
 pub enum TournamentView {
     Registration(RegistrationView),
     Pools((PoolView, Option<PoolResultView>)),
     Bracket(BracketView),
     Gauntlet(GauntletView),
-    Complete,
+    Complete(Vec<TournamentResultView>),
 }

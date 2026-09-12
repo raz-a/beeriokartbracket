@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 const DEFAULT_PUBLISH_URL: &str = "https://beeriokartbracket-api.beeriokart.workers.dev/snapshot";
 const PUBLISH_CONFIG_FILE: &str = "publishing.json";
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 struct PublishConfig {
@@ -149,8 +150,7 @@ impl Publisher {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
         let published_at_unix_ms = elapsed.as_millis().min(u64::MAX as u128) as u64;
-        let clock_revision = elapsed.as_nanos().min(u64::MAX as u128) as u64;
-        let revision = clock_revision.max(self.latest_revision.saturating_add(1));
+        let revision = next_revision(published_at_unix_ms, self.latest_revision);
         let snapshot = tournament.public_snapshot(tournament_name, revision, published_at_unix_ms);
         let body = match serde_json::to_string(&snapshot) {
             Ok(body) => body,
@@ -181,6 +181,12 @@ impl Publisher {
     pub(crate) fn status(&self) -> &PublishStatus {
         &self.status
     }
+}
+
+fn next_revision(published_at_unix_ms: u64, latest_revision: u64) -> u64 {
+    published_at_unix_ms
+        .max(latest_revision.saturating_add(1))
+        .min(MAX_SAFE_JSON_INTEGER)
 }
 
 fn publish_loop(
@@ -293,6 +299,16 @@ mod tests {
         let error = load_sidecar_config(&executable).unwrap_err();
         assert!(error.contains(&path.display().to_string()));
         assert!(error.contains("non-empty publish_token"));
+    }
+
+    #[test]
+    fn revision_is_monotonic_and_safe_for_json_consumers() {
+        let published_at_unix_ms = 1_789_190_000_000;
+
+        let revision = next_revision(published_at_unix_ms, published_at_unix_ms);
+
+        assert_eq!(revision, published_at_unix_ms + 1);
+        assert!(revision <= MAX_SAFE_JSON_INTEGER);
     }
 
     #[test]

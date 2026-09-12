@@ -198,10 +198,10 @@ function renderRace(race: Race): string {
       <ol class="racer-grid">
         ${race.racers
           .map(
-            (racer) => `
+            (racer, index) => `
               <li>
                 <span class="slot">${String(racer.slot).padStart(2, "0")}</span>
-                <strong>${escapeHtml(racer.racer_name)}</strong>
+                <strong class="racer-name player-color--${index % 8}">${escapeHtml(racer.racer_name)}</strong>
                 ${racer.placement ? `<span class="place">${placementLabel(racer.placement)}</span>` : ""}
               </li>`,
           )

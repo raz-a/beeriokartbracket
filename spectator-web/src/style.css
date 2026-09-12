@@ -226,6 +226,7 @@ svg {
 
 .page-shell {
     width: min(1180px, calc(100% - 40px));
+    min-width: 0;
     margin: 28px auto 64px;
     display: grid;
     gap: 24px;
@@ -410,6 +411,44 @@ svg {
     overflow-wrap: anywhere;
 }
 
+.racer-name {
+    font-family: "Mario", Impact, sans-serif;
+    font-size: 20px;
+    line-height: 1.1;
+}
+
+.player-color--0 {
+    color: #e8403c;
+}
+
+.player-color--1 {
+    color: #4678e8;
+}
+
+.player-color--2 {
+    color: #46c854;
+}
+
+.player-color--3 {
+    color: #f5d330;
+}
+
+.player-color--4 {
+    color: #f274c6;
+}
+
+.player-color--5 {
+    color: #f08c30;
+}
+
+.player-color--6 {
+    color: #30c8c8;
+}
+
+.player-color--7 {
+    color: #a964e8;
+}
+
 .slot {
     color: #73a87a;
     font-size: 12px;
@@ -421,6 +460,7 @@ svg {
 }
 
 .section-block {
+    min-width: 0;
     background: rgba(33, 27, 20, .96);
     border: 1px solid #4d3b20;
     padding: 24px;

@@ -158,23 +158,27 @@ svg {
     background: var(--amber);
 }
 
-.icon-button {
-    width: 44px;
+.refresh-button {
+    min-width: 112px;
     height: 44px;
-    display: grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 13px;
     border: 1px solid #685024;
     background: #211b14;
     color: var(--amber);
+    font: 12px "Mario", Impact, sans-serif;
     cursor: pointer;
 }
 
-.icon-button:hover {
+.refresh-button:hover {
     border-color: var(--amber);
     background: #302515;
 }
 
-.icon-button.spinning svg {
+.refresh-button.spinning svg {
     animation: spin 1s linear infinite;
 }
 
@@ -914,8 +918,7 @@ footer img {
         line-height: 1.08;
     }
 
-    .icon-button {
-        width: 40px;
+    .refresh-button {
         height: 40px;
     }
 

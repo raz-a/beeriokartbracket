@@ -18,7 +18,6 @@ import "./style.css";
 const SNAPSHOT_URL =
   import.meta.env.VITE_SNAPSHOT_URL ??
   "https://beeriokartbracket-api.beeriokart.workers.dev/snapshot";
-const REFRESH_INTERVAL_MS = 15_000;
 
 type Ruleset = "vanilla" | "beerio";
 type StandingStatus = "racing" | "advanced" | "eliminated";
@@ -110,7 +109,8 @@ const applicationRoot = app;
 
 let snapshot: Snapshot | null = null;
 let loadError: string | null = null;
-let loading = true;
+let loading = false;
+let hasRequestedSnapshot = false;
 let bracketSide: "winners" | "losers" = "winners";
 
 function escapeHtml(value: unknown): string {
@@ -363,9 +363,23 @@ function render(): void {
     return;
   }
   if (!snapshot) {
-    applicationRoot.innerHTML = `<div class="center-state error-state">${icon("wifi-off")}<strong>No live tournament yet</strong><p>${escapeHtml(loadError ?? "Check back shortly.")}</p><button id="retry">${icon("refresh-cw")} Retry</button><a class="state-link" href="/rules">View tournament rules</a></div>`;
+    applicationRoot.innerHTML = `
+      <header class="site-header">
+        <div class="header-inner">
+          <img src="/assets/beerio_kart_logo.png" alt="Beerio Kart Invitational" />
+          <div class="event-title"><p>Live tournament coverage</p><h1>Spectator View</h1></div>
+          <div class="header-actions">${renderNavigation("live")}</div>
+        </div>
+      </header>
+      <div class="center-state error-state">
+        ${icon(loadError ? "wifi-off" : "radio")}
+        <strong>${loadError ? "No live tournament available" : "Ready when you are"}</strong>
+        <p>${escapeHtml(loadError ?? "Load the latest published tournament results.")}</p>
+        <button id="load-snapshot">${icon("refresh-cw")} ${hasRequestedSnapshot ? "Try again" : "Load live results"}</button>
+        <a class="state-link" href="/rules">View tournament rules</a>
+      </div>`;
     activateIcons();
-    document.querySelector("#retry")?.addEventListener("click", () => void refresh());
+    document.querySelector("#load-snapshot")?.addEventListener("click", () => void refresh());
     return;
   }
 
@@ -378,13 +392,13 @@ function render(): void {
         <div class="event-title"><p>${escapeHtml(phaseLabel(snapshot.tournament.phase))}</p><h1>${escapeHtml(snapshot.tournament_name)}</h1></div>
         <div class="header-actions">
           ${renderNavigation("live")}
-          <button class="icon-button ${loading ? "spinning" : ""}" id="refresh" title="Refresh tournament" aria-label="Refresh tournament">${icon("refresh-cw")}</button>
+          <button class="refresh-button ${loading ? "spinning" : ""}" id="refresh">${icon("refresh-cw")} Refresh</button>
         </div>
       </div>
     </header>
     <div class="update-bar ${loadError || stale ? "update-bar--warning" : ""}">
       <span class="live-dot"></span>
-      <span>${loadError ? "Connection interrupted · showing last update" : stale ? "Update delayed" : "Live tournament feed"}</span>
+      <span>${loadError ? "Refresh failed · showing last update" : stale ? "Snapshot may be outdated · refresh for latest" : "Latest snapshot"}</span>
       <time datetime="${updated.toISOString()}">${icon("clock-3")} ${updated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>
     </div>
     <div class="page-shell">
@@ -417,6 +431,8 @@ function isSnapshot(value: unknown): value is Snapshot {
 }
 
 async function refresh(): Promise<void> {
+  if (loading) return;
+  hasRequestedSnapshot = true;
   loading = true;
   render();
   try {
@@ -437,13 +453,5 @@ async function refresh(): Promise<void> {
 if (window.location.pathname.replace(/\/+$/, "") === "/rules") {
   renderRulesPage();
 } else {
-  setInterval(() => {
-    if (document.visibilityState === "visible") void refresh();
-  }, REFRESH_INTERVAL_MS);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") void refresh();
-  });
-
   render();
-  void refresh();
 }

@@ -9,6 +9,8 @@ npm run dev
 
 The production build uses the deployed Worker endpoint. Set
 `VITE_SNAPSHOT_URL` to use another `/snapshot` endpoint during development.
+Tournament snapshots are requested only when a viewer selects **Load live
+results** or **Refresh**; the site does not poll automatically.
 The `/rules` route is generated directly from `docs/Rules_Brackets.md` during
 the production build.
 

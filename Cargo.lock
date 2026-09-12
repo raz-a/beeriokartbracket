@@ -469,6 +469,7 @@ dependencies = [
  "rand 0.10.2",
  "reqwest",
  "rfd",
+ "serde",
  "serde_json",
  "tempfile",
 ]

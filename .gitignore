@@ -1,3 +1,6 @@
 /target
 /cloudflare-worker/node_modules
 /cloudflare-worker/.wrangler
+/spectator-web/node_modules
+/spectator-web/dist
+/publishing.json

@@ -1,7 +1,11 @@
 # Spectator website
 
-This directory will contain the responsive, read-only website used by
-spectators. It will poll the public Cloudflare Worker endpoint and render the
-current tournament snapshot.
+Responsive, read-only tournament coverage for phones and desktop browsers.
 
-The frontend toolchain is intentionally not selected yet.
+```powershell
+npm install
+npm run dev
+```
+
+The production build uses the deployed Worker endpoint. Set
+`VITE_SNAPSHOT_URL` to use another `/snapshot` endpoint during development.

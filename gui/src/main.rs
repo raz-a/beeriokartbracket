@@ -243,11 +243,12 @@ impl eframe::App for TournamentApp {
                                 )
                                 .frame(false),
                             )
-                            .on_hover_text("Publishing requires BEERIOKART_PUBLISH_TOKEN")
+                            .on_hover_text("Place publishing.json beside the executable")
                             .clicked()
                     {
                         self.error = Some(
-                            "Set BEERIOKART_PUBLISH_TOKEN before starting the app, then restart it."
+                            "Place publishing.json beside the executable, then restart the app. \
+                             Environment variables remain supported for development."
                                 .to_owned(),
                         );
                     }

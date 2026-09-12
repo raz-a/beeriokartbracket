@@ -25,15 +25,31 @@ the deployed value will be configured as a Cloudflare secret.
 
 ## Desktop publisher
 
-The GUI publishes automatically after each successful local save when
-`BEERIOKART_PUBLISH_TOKEN` is present in its environment. The deployed endpoint
-is the default. Override it for local development with
-`BEERIOKART_PUBLISH_URL`.
+For a standalone deployment, build the release executable and place a file named
+`publishing.json` in the same directory as the executable. Start from the
+repository's `publishing.example.json` and replace the placeholder token with
+the value stored in the Worker's `PUBLISH_TOKEN` secret.
+
+```powershell
+cargo build --workspace --release
+New-Item -ItemType Directory release-package
+Copy-Item target/release/beeriokartbracket-gui.exe release-package/
+Copy-Item publishing.example.json release-package/publishing.json
+```
+
+The release package only needs the `.exe` and `publishing.json`; GUI images and
+fonts are embedded in the executable. Keep `publishing.json` private because it
+contains the credential that can replace the public snapshot.
+
+The deployed Worker endpoint is used when `publish_url` is omitted. Environment
+variables remain a fallback when no sidecar file exists, which is convenient for
+local development:
 
 ```powershell
 $env:BEERIOKART_PUBLISH_TOKEN = "the-same-value-stored-by-wrangler"
 cargo run
 ```
 
-Do not commit the token. Publication failures do not block local saves or
-tournament actions; the GUI reports them separately.
+Override the endpoint with `BEERIOKART_PUBLISH_URL`. A malformed sidecar is
+reported as a publication failure and is not bypassed with environment values.
+Publication failures do not block local saves or tournament actions.

@@ -1,9 +1,19 @@
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use beeriokartbracket::Tournament;
+use serde::Deserialize;
 
 const DEFAULT_PUBLISH_URL: &str = "https://beeriokartbracket-api.beeriokart.workers.dev/snapshot";
+const PUBLISH_CONFIG_FILE: &str = "publishing.json";
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct PublishConfig {
+    publish_token: String,
+    #[serde(default)]
+    publish_url: Option<String>,
+}
 
 struct PublishRequest {
     revision: u64,
@@ -33,27 +43,32 @@ pub(crate) struct Publisher {
 impl Default for Publisher {
     fn default() -> Self {
         let (result_sender, results) = mpsc::channel();
-        let Ok(token) = std::env::var("BEERIOKART_PUBLISH_TOKEN") else {
-            return Self {
-                requests: None,
-                results,
-                latest_revision: 0,
-                status: PublishStatus::Disabled,
-            };
+        let config = match resolve_publish_config() {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                return Self {
+                    requests: None,
+                    results,
+                    latest_revision: 0,
+                    status: PublishStatus::Disabled,
+                };
+            }
+            Err(error) => {
+                return Self {
+                    requests: None,
+                    results,
+                    latest_revision: 0,
+                    status: PublishStatus::Failed(error),
+                };
+            }
         };
-        if token.trim().is_empty() {
-            return Self {
-                requests: None,
-                results,
-                latest_revision: 0,
-                status: PublishStatus::Disabled,
-            };
-        }
-
-        let endpoint = std::env::var("BEERIOKART_PUBLISH_URL")
-            .unwrap_or_else(|_| DEFAULT_PUBLISH_URL.to_owned());
+        let endpoint = config
+            .publish_url
+            .unwrap_or_else(|| DEFAULT_PUBLISH_URL.to_owned());
         let (request_sender, requests) = mpsc::channel::<PublishRequest>();
-        std::thread::spawn(move || publish_loop(endpoint, token, requests, result_sender));
+        std::thread::spawn(move || {
+            publish_loop(endpoint, config.publish_token, requests, result_sender)
+        });
 
         Self {
             requests: Some(request_sender),
@@ -62,6 +77,66 @@ impl Default for Publisher {
             status: PublishStatus::Idle,
         }
     }
+}
+
+fn resolve_publish_config() -> Result<Option<PublishConfig>, String> {
+    let environment_config = environment_publish_config();
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            return environment_config.map(Some).ok_or_else(|| {
+                format!("could not locate the executable to find {PUBLISH_CONFIG_FILE}: {error}")
+            });
+        }
+    };
+
+    load_sidecar_config(&executable).map(|config| config.or(environment_config))
+}
+
+fn environment_publish_config() -> Option<PublishConfig> {
+    let token = std::env::var("BEERIOKART_PUBLISH_TOKEN").ok()?;
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+
+    let publish_url = std::env::var("BEERIOKART_PUBLISH_URL")
+        .ok()
+        .map(|url| url.trim().to_owned())
+        .filter(|url| !url.is_empty());
+    Some(PublishConfig {
+        publish_token: token.to_owned(),
+        publish_url,
+    })
+}
+
+fn load_sidecar_config(executable: &Path) -> Result<Option<PublishConfig>, String> {
+    let Some(directory) = executable.parent() else {
+        return Err(format!(
+            "could not determine the executable directory for {}",
+            executable.display()
+        ));
+    };
+    let path = directory.join(PUBLISH_CONFIG_FILE);
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("could not read {}: {error}", path.display())),
+    };
+    let mut config: PublishConfig = serde_json::from_str(&contents)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+    config.publish_token = config.publish_token.trim().to_owned();
+    if config.publish_token.is_empty() {
+        return Err(format!(
+            "{} must contain a non-empty publish_token",
+            path.display()
+        ));
+    }
+    config.publish_url = config
+        .publish_url
+        .map(|url| url.trim().to_owned())
+        .filter(|url| !url.is_empty());
+    Ok(Some(config))
 }
 
 impl Publisher {
@@ -177,6 +252,48 @@ mod tests {
     use std::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn loads_publish_config_beside_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("beeriokartbracket-gui.exe");
+        std::fs::write(
+            directory.path().join(PUBLISH_CONFIG_FILE),
+            r#"{
+                "publish_token": " secret-token ",
+                "publish_url": " http://localhost:8787/snapshot "
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_sidecar_config(&executable).unwrap(),
+            Some(PublishConfig {
+                publish_token: "secret-token".to_owned(),
+                publish_url: Some("http://localhost:8787/snapshot".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn missing_publish_config_allows_environment_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("beeriokartbracket-gui.exe");
+
+        assert_eq!(load_sidecar_config(&executable).unwrap(), None);
+    }
+
+    #[test]
+    fn invalid_publish_config_reports_its_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("beeriokartbracket-gui.exe");
+        let path = directory.path().join(PUBLISH_CONFIG_FILE);
+        std::fs::write(&path, r#"{"publish_token":""}"#).unwrap();
+
+        let error = load_sidecar_config(&executable).unwrap_err();
+        assert!(error.contains(&path.display().to_string()));
+        assert!(error.contains("non-empty publish_token"));
+    }
 
     #[test]
     fn send_snapshot_uses_put_with_bearer_token_and_json_body() {

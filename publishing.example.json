@@ -1,0 +1,4 @@
+{
+  "publish_token": "replace-with-the-cloudflare-publish-token",
+  "publish_url": "https://beeriokartbracket-api.beeriokart.workers.dev/snapshot"
+}

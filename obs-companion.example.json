@@ -1,0 +1,5 @@
+{
+    "snapshot_url": "https://beeriokartbracket-api.beeriokart.workers.dev/snapshot",
+    "output_directory": "obs-output",
+    "poll_interval_ms": 2000
+}

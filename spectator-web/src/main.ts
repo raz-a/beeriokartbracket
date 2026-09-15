@@ -377,12 +377,6 @@ function heatLabel(id: string): string {
 }
 
 function renderGauntlet(state: GauntletState): string {
-  const sorted = [...state.racers].sort((a, b) => {
-    if (a.placement && b.placement) return placementNumber(a.placement) - placementNumber(b.placement);
-    if (a.placement) return 1;
-    if (b.placement) return -1;
-    return b.lives - a.lives;
-  });
   return `
     <section class="section-block">
       <div class="section-heading">
@@ -390,7 +384,7 @@ function renderGauntlet(state: GauntletState): string {
         ${icon("heart")}
       </div>
       <div class="gauntlet-grid">
-        ${sorted
+        ${state.racers
           .map(
             (racer) => `<article class="gauntlet-racer ${racer.placement ? "eliminated" : ""}">
               <div><strong>${escapeHtml(racer.racer_name)}</strong>${racer.placement ? `<span>${placementLabel(racer.placement)} place</span>` : `<span>Still racing</span>`}</div>

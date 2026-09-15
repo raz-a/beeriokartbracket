@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantView};
@@ -18,6 +18,8 @@ struct GauntletRacer {
 pub(crate) struct Gauntlet {
     #[serde(with = "gauntlet_racers")]
     racers: HashMap<ParticipantId, GauntletRacer>,
+    #[serde(default)]
+    racer_order: Vec<ParticipantId>,
     races: Vec<Race>,
     beerio_interval: usize,
 }
@@ -72,6 +74,16 @@ impl PersistedState<ParticipantMap> for Gauntlet {
                 return Err("gauntlet racer has invalid lives");
             }
         }
+        if !self.racer_order.is_empty()
+            && (self.racer_order.len() != self.racers.len()
+                || self.racer_order.iter().collect::<HashSet<_>>().len() != self.racers.len()
+                || self
+                    .racer_order
+                    .iter()
+                    .any(|id| !self.racers.contains_key(id)))
+        {
+            return Err("gauntlet racer order does not match its racers");
+        }
         for race in &self.races {
             race.validate_loaded(participants)?;
         }
@@ -86,6 +98,7 @@ impl Gauntlet {
         losers: Vec<ParticipantId>,
         lives: NonZero<usize>,
     ) -> Self {
+        let racer_order = winners.iter().chain(&losers).copied().collect();
         Self {
             racers: winners
                 .into_iter()
@@ -110,6 +123,7 @@ impl Gauntlet {
                     )
                 }))
                 .collect(),
+            racer_order,
             races: vec![],
             beerio_interval: lives.get(),
         }
@@ -245,16 +259,24 @@ impl Gauntlet {
     }
 
     fn surviving_racers(&self) -> Vec<ParticipantId> {
-        self.racers
-            .iter()
-            .filter_map(|(&id, state)| {
-                if state.placement.is_none() {
-                    Some(id)
-                } else {
-                    None
-                }
+        self.ordered_racers()
+            .filter(|id| {
+                let state = &self.racers[id];
+                state.placement.is_none()
             })
             .collect()
+    }
+
+    fn ordered_racers(&self) -> impl Iterator<Item = ParticipantId> + '_ {
+        let order = if self.racer_order.is_empty() {
+            self.races.first().map_or_else(
+                || self.racers.keys().copied().collect(),
+                |race| race.get_racers().collect(),
+            )
+        } else {
+            self.racer_order.clone()
+        };
+        order.into_iter()
     }
 }
 
@@ -273,27 +295,17 @@ pub struct GauntletView {
 
 impl Viewable<GauntletView> for Gauntlet {
     fn view(&self, id_map: &ParticipantMap) -> GauntletView {
-        let mut racers: Vec<_> = self
-            .racers
-            .iter()
-            .map(|(&id, racer)| {
-                (
-                    racer.starting_lives,
-                    GauntletRacerView {
-                        participant: id.view(id_map),
-                        lives: racer.current_lives,
-                        placement: racer.placement,
-                    },
-                )
+        let racers = self
+            .ordered_racers()
+            .map(|id| {
+                let racer = &self.racers[&id];
+                GauntletRacerView {
+                    participant: id.view(id_map),
+                    lives: racer.current_lives,
+                    placement: racer.placement,
+                }
             })
             .collect();
-        racers.sort_by(|left, right| {
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| left.1.participant.name.cmp(&right.1.participant.name))
-        });
-        let racers = racers.into_iter().map(|(_, racer)| racer).collect();
 
         GauntletView {
             racers,
@@ -507,22 +519,40 @@ mod tests {
     }
 
     #[test]
-    fn view_order_stays_stable_when_lives_change() {
-        let (participants, racers) = make_racers(2);
-        let mut gauntlet = Gauntlet::new(vec![], racers.clone(), NonZero::new(2).unwrap());
+    fn view_and_race_order_stay_aligned_after_eliminations() {
+        let (participants, racers) = make_racers(4);
+        let mut gauntlet = Gauntlet::new(
+            racers[..2].to_vec(),
+            racers[2..].to_vec(),
+            NonZero::new(1).unwrap(),
+        );
         let initial_order: Vec<_> = gauntlet
             .view(&participants)
             .racers
             .into_iter()
             .map(|racer| racer.participant.id)
             .collect();
+        assert_eq!(initial_order, racers);
 
         assert!(!gauntlet.advance().unwrap());
+        assert_eq!(
+            gauntlet.races[0].get_racers().collect::<Vec<_>>(),
+            initial_order
+        );
         set_results(
             gauntlet.active_race().unwrap(),
-            &[(racers[0], 2), (racers[1], 1)],
+            &[
+                (racers[0], 1),
+                (racers[1], 2),
+                (racers[2], 3),
+                (racers[3], 4),
+            ],
         );
         assert!(!gauntlet.advance().unwrap());
+        assert_eq!(
+            gauntlet.races[1].get_racers().collect::<Vec<_>>(),
+            racers[..2]
+        );
 
         let updated_order: Vec<_> = gauntlet
             .view(&participants)

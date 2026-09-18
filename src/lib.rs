@@ -14,7 +14,7 @@ mod view;
 pub use bracket::{
     BracketFeederView, BracketRoundView, BracketSetId, BracketSetView, BracketView, FeederSource,
 };
-pub use config::Config;
+pub use config::{Config, PoolRaceFormat};
 pub use error::TournamentError;
 pub use gauntlet::{GauntletRacerView, GauntletView};
 pub use participant::{ParticipantId, ParticipantView};

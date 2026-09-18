@@ -6,9 +6,9 @@ use std::num::NonZero;
 
 use beeriokartbracket::{
     BracketRoundView, BracketSetId, BracketSetView, BracketView, Config, FeederSource,
-    GauntletView, ParticipantId, ParticipantView, Placement, PoolResultView, PoolView, RaceId,
-    RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError, TournamentResultView,
-    TournamentView,
+    GauntletView, ParticipantId, ParticipantView, Placement, PoolRaceFormat, PoolResultView,
+    PoolView, RaceId, RaceRuleset, RaceView, RegistrationView, Tournament, TournamentError,
+    TournamentResultView, TournamentView,
 };
 use eframe::egui;
 #[cfg(feature = "manual-validation")]
@@ -71,6 +71,7 @@ struct TournamentApp {
     #[cfg(feature = "manual-validation")]
     add_count: usize,
     pool_rounds: usize,
+    paired_pool_races: bool,
     bracket_size: usize,
     races_per_round: usize,
     gauntlet_lives: usize,
@@ -105,6 +106,7 @@ impl Default for TournamentApp {
             #[cfg(feature = "manual-validation")]
             add_count: 16,
             pool_rounds: 8,
+            paired_pool_races: false,
             bracket_size: 16,
             races_per_round: 3,
             gauntlet_lives: 3,
@@ -542,6 +544,8 @@ impl TournamentApp {
             return;
         };
         self.pool_rounds = registration.config.pool_rounds.get();
+        self.paired_pool_races =
+            registration.config.pool_race_format == PoolRaceFormat::BeerioVanillaPairs;
         self.bracket_size = registration.config.bracket_size.get();
         self.races_per_round = registration.config.bracket_races_per_round.get();
         self.gauntlet_lives = registration.config.gauntlet_lives.get();
@@ -680,6 +684,10 @@ impl TournamentApp {
                 ui.end_row();
             });
 
+        ui.add_space(10.0);
+        ui.checkbox(&mut self.paired_pool_races, "Pair each pool round")
+            .on_hover_text("Run Beerio followed by Vanilla with the same racers");
+
         ui.add_space(18.0);
         let start = ui.add_sized(
             [ui.available_width(), 46.0],
@@ -734,6 +742,11 @@ impl TournamentApp {
     fn pending_config(&self, seed: u64) -> Option<Config> {
         Some(Config {
             pool_rounds: NonZero::new(self.pool_rounds)?,
+            pool_race_format: if self.paired_pool_races {
+                PoolRaceFormat::BeerioVanillaPairs
+            } else {
+                PoolRaceFormat::AlternatingSingles
+            },
             bracket_size: NonZero::new(self.bracket_size)?,
             bracket_races_per_round: NonZero::new(self.races_per_round)?,
             gauntlet_lives: NonZero::new(self.gauntlet_lives)?,
@@ -791,6 +804,12 @@ impl TournamentApp {
         match &pool.current_race {
             Some(race) => {
                 let round = pool.current_round + 1;
+                let race_number = (pool.races_per_round > 1).then(|| {
+                    format!(
+                        " · Race {} of {}",
+                        pool.current_race_number, pool.races_per_round
+                    )
+                });
                 let (emoji, kind) = match race.ruleset {
                     RaceRuleset::Beerio => ("🍺", "Beerio"),
                     RaceRuleset::Vanilla => ("🏁", "Vanilla"),
@@ -825,7 +844,8 @@ impl TournamentApp {
                                     ui.set_width(420.0);
                                     ui.label(
                                         egui::RichText::new(format!(
-                                            "{emoji}  Round {round} · {kind}"
+                                            "{emoji}  Round {round}{} · {kind}",
+                                            race_number.as_deref().unwrap_or_default()
                                         ))
                                         .color(egui::Color32::BLACK)
                                         .font(title_font(24.0)),
@@ -1341,6 +1361,11 @@ impl TournamentApp {
 
         self.tournament.set_config(Config {
             pool_rounds: NonZero::new(self.pool_rounds).expect("pool rounds are at least one"),
+            pool_race_format: if self.paired_pool_races {
+                PoolRaceFormat::BeerioVanillaPairs
+            } else {
+                PoolRaceFormat::AlternatingSingles
+            },
             bracket_size: NonZero::new(player_count).expect("bracket size is at least one"),
             bracket_races_per_round: NonZero::new(self.races_per_round)
                 .expect("races per heat are at least one"),

@@ -67,7 +67,12 @@ After registration, all players will begin in the "0 races" bucket.
 
 Players will be randomly chosen from the lowest bucket to participate in a single race (depending on the number of registered participants, this will be a 6-player, 7-player, or 8-player race). After the race, points will be awarded according to each player's placement and added to their total score. The players will then be moved to the next bucket.
 
-Each even bucket is played using the Beerio Kart ruleset, while odd buckets use the Vanilla ruleset.
+The tournament configuration selects one of two pool race formats:
+
+- **Alternating singles (default):** each round contains one race. Even buckets use Beerio Kart and odd buckets use Vanilla.
+- **Beerio + Vanilla pairs:** each round keeps the same group together for two scored races, Beerio first and Vanilla second. Racers move to the next bucket only after both races are complete.
+
+In either format, the configured pool-round count is the number of rounds. Both races in a paired round award full placement points and contribute independently to standings and count-back.
 
 Pools races will continue until all players are in the "8 races" bucket.
 

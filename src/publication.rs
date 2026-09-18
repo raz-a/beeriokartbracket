@@ -178,7 +178,14 @@ impl PublicTournamentSnapshot {
             ),
             TournamentView::Pools((pool, results)) => {
                 let active_race = pool.current_race.as_ref().map(|race| {
-                    public_active_race(format!("Pools Round {}", pool.current_round + 1), race)
+                    let mut label = format!("Pools Round {}", pool.current_round + 1);
+                    if pool.races_per_round > 1 {
+                        label.push_str(&format!(
+                            " · Race {} of {}",
+                            pool.current_race_number, pool.races_per_round
+                        ));
+                    }
+                    public_active_race(label, race)
                 });
                 (
                     active_race,

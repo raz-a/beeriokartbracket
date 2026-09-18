@@ -1,8 +1,18 @@
 use std::num::NonZero;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolRaceFormat {
+    #[default]
+    AlternatingSingles,
+    BeerioVanillaPairs,
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub pool_rounds: NonZero<usize>,
+    #[serde(default)]
+    pub pool_race_format: PoolRaceFormat,
     pub bracket_size: NonZero<usize>,
     pub bracket_races_per_round: NonZero<usize>,
     pub gauntlet_lives: NonZero<usize>,
@@ -18,6 +28,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             pool_rounds: DEFAULT_POOL_ROUNDS,
+            pool_race_format: PoolRaceFormat::default(),
             bracket_size: DEFAULT_BRACKET_SIZE,
             bracket_races_per_round: DEFAULT_BRACKET_RACES_COUNT,
             gauntlet_lives: DEFAULT_GAUNTLET_LIVES,

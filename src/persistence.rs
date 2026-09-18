@@ -91,7 +91,7 @@ pub fn deserialize_tournament(json: &str) -> Result<(String, Tournament), Persis
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Placement, TournamentView};
+    use crate::{Placement, PoolRaceFormat, RaceRuleset, TournamentView};
 
     #[test]
     fn registration_round_trips() {
@@ -115,6 +115,25 @@ mod tests {
     }
 
     #[test]
+    fn saves_without_pool_race_format_default_to_alternating_singles() {
+        let json = serialize_tournament("Test Cup", &Tournament::default()).unwrap();
+        let mut document: serde_json::Value = serde_json::from_str(&json).unwrap();
+        document["tournament"]["config"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pool_race_format");
+
+        let (_, loaded) = deserialize_tournament(&document.to_string()).unwrap();
+        let TournamentView::Registration(registration) = loaded.view() else {
+            panic!("loaded tournament should remain in registration");
+        };
+        assert_eq!(
+            registration.config.pool_race_format,
+            PoolRaceFormat::AlternatingSingles
+        );
+    }
+
+    #[test]
     fn pool_rng_state_round_trips() {
         let mut tournament = Tournament::default();
         for number in 1..=16 {
@@ -132,6 +151,44 @@ mod tests {
         complete_active_pool_race(&mut loaded);
 
         assert_eq!(active_pool_racers(&tournament), active_pool_racers(&loaded));
+    }
+
+    #[test]
+    fn paired_pool_round_trips_between_races() {
+        let mut tournament = Tournament::default();
+        for number in 1..=16 {
+            tournament
+                .add_participant(&format!("Player {number}"))
+                .unwrap();
+        }
+        tournament
+            .set_config(crate::Config {
+                pool_race_format: PoolRaceFormat::BeerioVanillaPairs,
+                ..crate::Config::default()
+            })
+            .unwrap();
+        tournament.next_phase().unwrap();
+        tournament.advance_pools().unwrap();
+        let first_race_racers = active_pool_racers(&tournament);
+        complete_active_pool_race(&mut tournament);
+
+        let json = serialize_tournament("Test Cup", &tournament).unwrap();
+        let (_, loaded) = deserialize_tournament(&json).unwrap();
+        let TournamentView::Pools((pool, _)) = loaded.view() else {
+            panic!("loaded tournament should remain in pools");
+        };
+        assert_eq!(pool.current_race_number, 2);
+        assert_eq!(pool.races_per_round, 2);
+        let second_race = pool.current_race.unwrap();
+        assert!(matches!(second_race.ruleset, RaceRuleset::Vanilla));
+        assert_eq!(
+            second_race
+                .racers
+                .iter()
+                .map(|(participant, _)| participant.id)
+                .collect::<Vec<_>>(),
+            first_race_racers
+        );
     }
 
     #[test]

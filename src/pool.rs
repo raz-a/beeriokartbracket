@@ -8,6 +8,7 @@ use rand::{Rng, SeedableRng};
 use slotmap::SlotMap;
 
 use crate::TournamentError;
+use crate::config::PoolRaceFormat;
 use crate::participant::{ParticipantId, ParticipantMap, ParticipantScore, ParticipantView};
 use crate::persistence::PersistedState;
 use crate::race::{MAX_RACERS, Race, RaceId, RaceRuleset, RaceView};
@@ -88,6 +89,10 @@ pub(crate) struct Pool {
     current_round: usize,
     max_round: usize,
     number_of_participants: usize,
+    #[serde(default)]
+    race_format: PoolRaceFormat,
+    #[serde(default)]
+    current_race_index: usize,
     current_race: Option<Race>,
     completed_races: SlotMap<RaceId, RaceWithBucket>,
     rng: Xoshiro256PlusPlus,
@@ -100,6 +105,12 @@ impl PersistedState<ParticipantMap> for Pool {
         }
         if self.number_of_participants != participants.len() {
             return Err("pool participant count does not match the tournament");
+        }
+        if self.current_race_index >= self.races_per_round() {
+            return Err("active pool race index exceeds the configured round format");
+        }
+        if self.current_race.is_none() && self.current_race_index != 0 {
+            return Err("pool race index is set without an active race");
         }
         if self.current_bucket.tracker.remaining_participant_count()
             != Some(self.current_bucket.participants.len())
@@ -154,6 +165,7 @@ impl Pool {
         target_rounds: usize,
         participants: &[ParticipantId],
         seed: u64,
+        race_format: PoolRaceFormat,
     ) -> Result<Self, TournamentError> {
         let mut first_bucket = FillingBucket::default();
         first_bucket.push_participants(participants);
@@ -166,6 +178,8 @@ impl Pool {
             current_round: 0,
             max_round: target_rounds,
             number_of_participants: participants.len(),
+            race_format,
+            current_race_index: 0,
             current_race: Default::default(),
             completed_races: Default::default(),
             rng: Xoshiro256PlusPlus::seed_from_u64(seed),
@@ -182,20 +196,26 @@ impl Pool {
 
             // Move the completed race participants to the next bucket.
             let participants: Vec<ParticipantId> = race.get_racers().collect();
-            self.next_bucket.push_participants(&participants);
             self.completed_races
                 .insert(RaceWithBucket(race, self.current_round));
+
+            if self.race_format == PoolRaceFormat::BeerioVanillaPairs
+                && self.current_race_index == 0
+            {
+                self.current_race_index = 1;
+                self.create_race(&participants);
+                return Ok(false);
+            }
+
+            self.current_race_index = 0;
+            self.next_bucket.push_participants(&participants);
         }
 
         debug_assert!(self.current_race.is_none());
 
         while !self.is_complete() {
             if let Some(racers) = self.current_bucket.pop_next_race_candidate(&mut self.rng) {
-                let ruleset = self.get_current_ruleset();
-                let race = self.current_race.insert(Race::default());
-                race.set_ruleset(ruleset);
-                race.add_racers(&racers)
-                    .expect("Race was just created and shouldn't have any collisions or overflow");
+                self.create_race(&racers);
 
                 return Ok(false);
             }
@@ -319,10 +339,31 @@ impl Pool {
     }
 
     fn get_current_ruleset(&self) -> RaceRuleset {
-        if self.current_round.is_multiple_of(2) {
-            RaceRuleset::Beerio
-        } else {
-            RaceRuleset::Vanilla
+        match self.race_format {
+            PoolRaceFormat::BeerioVanillaPairs => match self.current_race_index {
+                0 => RaceRuleset::Beerio,
+                1 => RaceRuleset::Vanilla,
+                _ => unreachable!("validated pool race index"),
+            },
+            PoolRaceFormat::AlternatingSingles if self.current_round.is_multiple_of(2) => {
+                RaceRuleset::Beerio
+            }
+            PoolRaceFormat::AlternatingSingles => RaceRuleset::Vanilla,
+        }
+    }
+
+    fn create_race(&mut self, racers: &[ParticipantId]) {
+        let ruleset = self.get_current_ruleset();
+        let race = self.current_race.insert(Race::default());
+        race.set_ruleset(ruleset);
+        race.add_racers(racers)
+            .expect("Race was just created and shouldn't have any collisions or overflow");
+    }
+
+    fn races_per_round(&self) -> usize {
+        match self.race_format {
+            PoolRaceFormat::AlternatingSingles => 1,
+            PoolRaceFormat::BeerioVanillaPairs => 2,
         }
     }
 }
@@ -331,6 +372,8 @@ impl Pool {
 pub struct PoolView {
     pub current_round: usize,
     pub max_rounds: usize,
+    pub current_race_number: usize,
+    pub races_per_round: usize,
     pub completed_races: Vec<(RaceId, RaceView, usize)>,
     pub current_race: Option<RaceView>,
     pub remaining_racers_in_round: Vec<ParticipantView>,
@@ -342,6 +385,8 @@ impl Viewable<PoolView> for Pool {
         PoolView {
             current_round: self.current_round,
             max_rounds: self.max_round,
+            current_race_number: self.current_race_index + 1,
+            races_per_round: self.races_per_round(),
             completed_races: self
                 .completed_races
                 .iter()
@@ -430,7 +475,13 @@ mod tests {
 
     /// A pool marked complete holding just `races`; bucket state is irrelevant to `get_results`.
     fn completed_pool(races: Vec<Race>) -> Pool {
-        let mut pool = Pool::new(1, &make_participants(8), 0).unwrap();
+        let mut pool = Pool::new(
+            1,
+            &make_participants(8),
+            0,
+            PoolRaceFormat::AlternatingSingles,
+        )
+        .unwrap();
         pool.current_round = pool.max_round;
         for race in races {
             pool.completed_races.insert(RaceWithBucket(race, 0));
@@ -525,7 +576,15 @@ mod tests {
     fn pool_rejects_counts_that_cannot_form_legal_races() {
         // 10 racers can't be split into only 6/7/8-player races.
         assert!(RaceGroupTracker::new(10, MIN_POOL_RACE_SIZE).is_err());
-        assert!(Pool::new(8, &make_participants(10), 0).is_err());
+        assert!(
+            Pool::new(
+                8,
+                &make_participants(10),
+                0,
+                PoolRaceFormat::AlternatingSingles,
+            )
+            .is_err()
+        );
 
         // Boundary counts that *can* form legal races.
         assert!(RaceGroupTracker::new(6, MIN_POOL_RACE_SIZE).is_ok()); // a single 6-player race
@@ -535,7 +594,7 @@ mod tests {
     #[test]
     fn pool_runs_until_every_racer_reaches_the_top_bucket() {
         let ids = make_participants(16);
-        let mut pool = Pool::new(8, &ids, 42).unwrap();
+        let mut pool = Pool::new(8, &ids, 42, PoolRaceFormat::AlternatingSingles).unwrap();
 
         let mut appearances: HashMap<ParticipantId, usize> = HashMap::new();
         while !pool.advance().unwrap() {
@@ -557,9 +616,42 @@ mod tests {
     }
 
     #[test]
+    fn paired_pool_rounds_keep_racers_together_for_beerio_then_vanilla() {
+        let ids = make_participants(16);
+        let mut pool = Pool::new(8, &ids, 42, PoolRaceFormat::BeerioVanillaPairs).unwrap();
+        let mut first_race_racers = None;
+        let mut appearances: HashMap<ParticipantId, usize> = HashMap::new();
+
+        while !pool.advance().unwrap() {
+            let current_race_index = pool.current_race_index;
+            let race = pool
+                .active_race()
+                .expect("advance() == false guarantees an active race");
+            let racers: HashSet<_> = race.get_racers().collect();
+
+            if current_race_index == 0 {
+                assert!(matches!(race.ruleset(), RaceRuleset::Beerio));
+                first_race_racers = Some(racers.clone());
+            } else {
+                assert!(matches!(race.ruleset(), RaceRuleset::Vanilla));
+                assert_eq!(first_race_racers.take().unwrap(), racers);
+            }
+
+            for id in racers {
+                *appearances.entry(id).or_default() += 1;
+            }
+            complete_race(race);
+        }
+
+        assert_eq!(appearances.len(), ids.len());
+        assert!(appearances.values().all(|&count| count == 16));
+        assert_eq!(pool.completed_races.len(), 32);
+    }
+
+    #[test]
     fn pool_races_stay_within_legal_size_bounds() {
         let ids = make_participants(15);
-        let mut pool = Pool::new(8, &ids, 7).unwrap();
+        let mut pool = Pool::new(8, &ids, 7, PoolRaceFormat::AlternatingSingles).unwrap();
 
         while !pool.advance().unwrap() {
             let race = pool

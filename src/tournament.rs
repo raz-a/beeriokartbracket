@@ -14,8 +14,6 @@ use crate::{BracketSetId, Placement};
 
 // TODO: Add ability to go back from states.
 
-// TODO: Look into having this hosted somewhere so others can view the current tourney state.
-
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 enum TournamentPhase {
     #[default]
@@ -94,6 +92,7 @@ impl Tournament {
                     self.config.pool_rounds.into(),
                     &self.participants.keys().collect::<Vec<_>>(),
                     self.config.seed,
+                    self.config.pool_race_format,
                 )?));
 
                 Ok(())
@@ -383,6 +382,7 @@ mod tests {
             PublicTournamentPhase::Registration(_)
         ));
 
+        tournament.config.pool_race_format = crate::PoolRaceFormat::BeerioVanillaPairs;
         tournament.next_phase().unwrap();
         tournament.advance_pools().unwrap();
         let expected_pool_order: Vec<_> = match tournament.view() {
@@ -396,6 +396,10 @@ mod tests {
             _ => panic!("expected pools view"),
         };
         let pools = tournament.public_snapshot("Test Cup", 8, 1235);
+        assert_eq!(
+            pools.active_race.as_ref().unwrap().label,
+            "Pools Round 1 · Race 1 of 2"
+        );
         assert_eq!(
             pools
                 .active_race
@@ -507,7 +511,13 @@ mod tests {
             })
             .collect();
         tournament.phase = TournamentPhase::Pools(Box::new(
-            Pool::new(8, &racers, tournament.config.seed).unwrap(),
+            Pool::new(
+                8,
+                &racers,
+                tournament.config.seed,
+                tournament.config.pool_race_format,
+            )
+            .unwrap(),
         ));
         tournament.participants.remove(racers[0]);
 

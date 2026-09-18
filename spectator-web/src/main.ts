@@ -604,5 +604,5 @@ async function refresh(): Promise<void> {
 if (window.location.pathname.replace(/\/+$/, "") === "/rules") {
   renderRulesPage();
 } else {
-  render();
+  void refresh();
 }

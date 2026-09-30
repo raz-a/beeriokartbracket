@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Tournament;
 
-const SCHEMA_VERSION: u32 = 1;
+/// Version 2 archives finished phases in the tournament. Version 1 files lack
+/// that history but otherwise share the layout, so they still load.
+const SCHEMA_VERSION: u32 = 2;
+const MIN_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) trait PersistedState<Context: ?Sized = ()>: Serialize + DeserializeOwned {
     fn validate_loaded(&self, context: &Context) -> Result<(), &'static str>;
@@ -74,7 +77,7 @@ pub fn serialize_tournament(
 
 pub fn deserialize_tournament(json: &str) -> Result<(String, Tournament), PersistenceError> {
     let document: TournamentDocument<Tournament> = serde_json::from_str(json)?;
-    if document.schema_version != SCHEMA_VERSION {
+    if !(MIN_SCHEMA_VERSION..=SCHEMA_VERSION).contains(&document.schema_version) {
         return Err(PersistenceError::UnsupportedSchema(document.schema_version));
     }
     if document.name.trim().is_empty() {
@@ -195,12 +198,33 @@ mod tests {
     fn rejects_unknown_schema_version() {
         let json = serialize_tournament("Test Cup", &Tournament::default()).unwrap();
         let mut document: serde_json::Value = serde_json::from_str(&json).unwrap();
-        document["schema_version"] = 2.into();
+        document["schema_version"] = (SCHEMA_VERSION + 1).into();
 
         assert!(matches!(
             deserialize_tournament(&document.to_string()),
-            Err(PersistenceError::UnsupportedSchema(2))
+            Err(PersistenceError::UnsupportedSchema(version)) if version == SCHEMA_VERSION + 1
         ));
+    }
+
+    #[test]
+    fn loads_schema_v1_without_completed_phases() {
+        let mut tournament = Tournament::default();
+        for number in 1..=16 {
+            tournament
+                .add_participant(&format!("Player {number}"))
+                .unwrap();
+        }
+        tournament.next_phase().unwrap();
+        let json = serialize_tournament("Test Cup", &tournament).unwrap();
+        let mut document: serde_json::Value = serde_json::from_str(&json).unwrap();
+        document["schema_version"] = 1.into();
+        document["tournament"]
+            .as_object_mut()
+            .unwrap()
+            .remove("completed_phases");
+
+        let (_, loaded) = deserialize_tournament(&document.to_string()).unwrap();
+        assert!(matches!(loaded.view(), TournamentView::Pools(_)));
     }
 
     fn complete_active_pool_race(tournament: &mut Tournament) {

@@ -24,15 +24,77 @@ enum TournamentPhase {
     Complete(Vec<(ParticipantId, Placement)>),
 }
 
+/// A competitive phase that has finished. `next_phase()` archives each one here
+/// instead of dropping it, so the tournament (and its save file) keeps every
+/// race from registration to the final result.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum CompletedPhase {
+    Pools(Box<Pool>),
+    Bracket(Box<Bracket>),
+    Gauntlet(Box<Gauntlet>),
+}
+
+impl CompletedPhase {
+    fn archive(phase: TournamentPhase) -> Option<Self> {
+        match phase {
+            TournamentPhase::Pools(pool) => Some(Self::Pools(pool)),
+            TournamentPhase::Bracket(bracket) => Some(Self::Bracket(bracket)),
+            TournamentPhase::Gauntlet(gauntlet) => Some(Self::Gauntlet(gauntlet)),
+            TournamentPhase::Registration | TournamentPhase::Complete(_) => None,
+        }
+    }
+
+    /// Position in the fixed phase order, shared with `TournamentPhase::order`.
+    fn order(&self) -> u8 {
+        match self {
+            Self::Pools(_) => 1,
+            Self::Bracket(_) => 2,
+            Self::Gauntlet(_) => 3,
+        }
+    }
+}
+
+impl TournamentPhase {
+    fn order(&self) -> u8 {
+        match self {
+            Self::Registration => 0,
+            Self::Pools(_) => 1,
+            Self::Bracket(_) => 2,
+            Self::Gauntlet(_) => 3,
+            Self::Complete(_) => 4,
+        }
+    }
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Tournament {
     phase: TournamentPhase,
+    // Absent from schema v1 files, which discarded finished phases.
+    #[serde(default)]
+    completed_phases: Vec<CompletedPhase>,
     config: Config,
     participants: ParticipantMap,
 }
 
 impl PersistedState for Tournament {
     fn validate_loaded(&self, _context: &()) -> Result<(), &'static str> {
+        // Archived phases must be strictly ordered and precede the current phase. A
+        // tournament migrated from schema v1 mid-event may lack its earliest phases.
+        let mut previous = 0;
+        for completed in &self.completed_phases {
+            if completed.order() <= previous || completed.order() >= self.phase.order() {
+                return Err("completed phases are out of order");
+            }
+            previous = completed.order();
+            match completed {
+                CompletedPhase::Pools(pool) => pool.validate_loaded(&self.participants)?,
+                CompletedPhase::Bracket(bracket) => bracket.validate_loaded(&self.participants)?,
+                CompletedPhase::Gauntlet(gauntlet) => {
+                    gauntlet.validate_loaded(&self.participants)?
+                }
+            }
+        }
+
         match &self.phase {
             TournamentPhase::Registration => Ok(()),
             TournamentPhase::Pools(pool) => pool.validate_loaded(&self.participants),
@@ -82,20 +144,18 @@ impl Tournament {
     }
 
     pub fn next_phase(&mut self) -> Result<(), TournamentError> {
-        match &self.phase {
+        let next = match &self.phase {
             TournamentPhase::Registration => {
                 if self.participants.is_empty() {
                     return Err(TournamentError::NoParticipants);
                 }
 
-                self.phase = TournamentPhase::Pools(Box::new(Pool::new(
+                TournamentPhase::Pools(Box::new(Pool::new(
                     self.config.pool_rounds.into(),
                     &self.participants.keys().collect::<Vec<_>>(),
                     self.config.seed,
                     self.config.pool_race_format,
-                )?));
-
-                Ok(())
+                )?))
             }
             TournamentPhase::Pools(pool) => {
                 let results = pool
@@ -103,12 +163,10 @@ impl Tournament {
                     .ok_or(TournamentError::PoolsNotCompleted)?;
                 let racers = results.advanced_ids();
 
-                self.phase = TournamentPhase::Bracket(Box::new(Bracket::new(
+                TournamentPhase::Bracket(Box::new(Bracket::new(
                     self.config.bracket_races_per_round.get(),
                     &racers,
-                )?));
-
-                Ok(())
+                )?))
             }
             TournamentPhase::Bracket(bracket) => {
                 if !bracket.is_complete() {
@@ -119,20 +177,20 @@ impl Tournament {
                     .get_results()
                     .ok_or(TournamentError::BracketNotCompleted)?;
 
-                self.phase = TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
+                TournamentPhase::Gauntlet(Box::new(Gauntlet::new(
                     winners,
                     losers,
                     self.config.gauntlet_lives,
-                )));
+                )))
+            }
+            TournamentPhase::Gauntlet(gauntlet) => TournamentPhase::Complete(gauntlet.results()?),
+            TournamentPhase::Complete(_) => return Ok(()),
+        };
 
-                Ok(())
-            }
-            TournamentPhase::Gauntlet(gauntlet) => {
-                self.phase = TournamentPhase::Complete(gauntlet.results()?);
-                Ok(())
-            }
-            TournamentPhase::Complete(_) => Ok(()),
-        }
+        let finished = std::mem::replace(&mut self.phase, next);
+        self.completed_phases
+            .extend(CompletedPhase::archive(finished));
+        Ok(())
     }
 
     pub fn view(&self) -> TournamentView {
@@ -318,6 +376,157 @@ mod tests {
     fn round_trip(tournament: &Tournament) -> Tournament {
         let json = serialize_tournament("Test Cup", tournament).unwrap();
         deserialize_tournament(&json).unwrap().1
+    }
+
+    fn ordered_results(racers: &[ParticipantView]) -> Vec<(ParticipantId, Option<Placement>)> {
+        racers
+            .iter()
+            .enumerate()
+            .map(|(index, racer)| (racer.id, Some(Placement::new((index + 1) as u8).unwrap())))
+            .collect()
+    }
+
+    fn complete_pools(tournament: &mut Tournament) {
+        while !tournament.advance_pools().unwrap() {
+            let TournamentView::Pools((pool, _)) = tournament.view() else {
+                panic!("tournament should remain in pools");
+            };
+            let racers: Vec<_> = pool
+                .current_race
+                .unwrap()
+                .racers
+                .into_iter()
+                .map(|(racer, _)| racer)
+                .collect();
+            tournament
+                .update_active_race(ordered_results(&racers))
+                .unwrap();
+        }
+    }
+
+    fn complete_bracket(tournament: &mut Tournament) {
+        loop {
+            let TournamentView::Bracket(bracket) = tournament.view() else {
+                panic!("tournament should remain in the bracket phase");
+            };
+            let Some(active_id) = bracket.active_set else {
+                assert_eq!(bracket.winners_finalists.len(), 4);
+                assert_eq!(bracket.losers_finalists.len(), 4);
+                break;
+            };
+            let active_set = bracket
+                .winners
+                .iter()
+                .chain(&bracket.losers)
+                .flat_map(|round| &round.sets)
+                .find(|(id, _)| *id == active_id)
+                .map(|(_, set)| set)
+                .unwrap();
+            let results = ordered_results(&active_set.racers);
+
+            for race_index in 0..active_set.races.len() {
+                tournament
+                    .update_bracket_set(active_id, race_index, results.clone())
+                    .unwrap();
+            }
+            tournament.advance_bracket().unwrap();
+        }
+    }
+
+    fn complete_gauntlet(tournament: &mut Tournament) {
+        while !tournament.advance_gauntlet().unwrap() {
+            let TournamentView::Gauntlet(gauntlet) = tournament.view() else {
+                panic!("tournament should remain in the gauntlet");
+            };
+            let race_index = gauntlet.races.len() - 1;
+            let racers: Vec<_> = gauntlet
+                .races
+                .into_iter()
+                .last()
+                .unwrap()
+                .racers
+                .into_iter()
+                .map(|(racer, _)| racer)
+                .collect();
+            tournament
+                .update_gauntlet_race(race_index, ordered_results(&racers))
+                .unwrap();
+        }
+    }
+
+    fn run_full_tournament() -> Tournament {
+        let mut tournament = Tournament::default();
+        for number in 1..=16 {
+            tournament
+                .add_participant(&format!("Player {number}"))
+                .unwrap();
+        }
+        tournament.next_phase().unwrap();
+        complete_pools(&mut tournament);
+        tournament.next_phase().unwrap();
+        complete_bracket(&mut tournament);
+        tournament.next_phase().unwrap();
+        complete_gauntlet(&mut tournament);
+        tournament.next_phase().unwrap();
+        tournament
+    }
+
+    #[test]
+    fn completed_phases_survive_a_full_tournament_and_persistence() {
+        let tournament = run_full_tournament();
+        assert!(matches!(tournament.phase, TournamentPhase::Complete(_)));
+
+        let loaded = round_trip(&tournament);
+        let [
+            CompletedPhase::Pools(pool),
+            CompletedPhase::Bracket(bracket),
+            CompletedPhase::Gauntlet(gauntlet),
+        ] = loaded.completed_phases.as_slice()
+        else {
+            panic!("expected archived pools, bracket, and gauntlet");
+        };
+        assert!(pool.get_results(loaded.config.bracket_size.get()).is_some());
+        assert!(bracket.is_complete());
+        assert!(gauntlet.is_complete());
+        assert!(!gauntlet.view(&loaded.participants).races.is_empty());
+
+        // Completing again must not archive anything twice.
+        let mut loaded = loaded;
+        loaded.next_phase().unwrap();
+        assert_eq!(loaded.completed_phases.len(), 3);
+    }
+
+    #[test]
+    fn persistence_rejects_out_of_order_completed_phases() {
+        let mut tournament = run_full_tournament();
+        tournament.completed_phases.swap(0, 1);
+
+        let json = serialize_tournament("Test Cup", &tournament).unwrap();
+        assert!(matches!(
+            deserialize_tournament(&json),
+            Err(PersistenceError::InvalidTournament(_))
+        ));
+    }
+
+    #[test]
+    fn persistence_rejects_completed_phase_not_before_current_phase() {
+        let mut tournament = run_full_tournament();
+        let gauntlet = tournament.completed_phases.pop().unwrap();
+        let CompletedPhase::Gauntlet(gauntlet) = gauntlet else {
+            panic!("expected archived gauntlet last");
+        };
+        tournament.phase = TournamentPhase::Gauntlet(
+            serde_json::from_value(serde_json::to_value(&gauntlet).unwrap()).unwrap(),
+        );
+        tournament
+            .completed_phases
+            .push(CompletedPhase::Gauntlet(gauntlet));
+
+        let json = serialize_tournament("Test Cup", &tournament).unwrap();
+        assert!(matches!(
+            deserialize_tournament(&json),
+            Err(PersistenceError::InvalidTournament(_))
+        ));
     }
 
     #[test]
@@ -577,36 +786,7 @@ mod tests {
             .collect();
         tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
 
-        loop {
-            let TournamentView::Bracket(bracket) = tournament.view() else {
-                panic!("tournament should remain in the bracket phase");
-            };
-            let Some(active_id) = bracket.active_set else {
-                assert_eq!(bracket.winners_finalists.len(), 4);
-                assert_eq!(bracket.losers_finalists.len(), 4);
-                break;
-            };
-            let active_set = bracket
-                .winners
-                .iter()
-                .chain(&bracket.losers)
-                .flat_map(|round| &round.sets)
-                .find(|(id, _)| *id == active_id)
-                .map(|(_, set)| set)
-                .unwrap();
-            let results =
-                active_set.racers.iter().enumerate().map(|(index, racer)| {
-                    (racer.id, Some(Placement::new((index + 1) as u8).unwrap()))
-                });
-
-            for race_index in 0..active_set.races.len() {
-                tournament
-                    .update_bracket_set(active_id, race_index, results.clone().collect())
-                    .unwrap();
-            }
-            tournament.advance_bracket().unwrap();
-        }
-
+        complete_bracket(&mut tournament);
         tournament.next_phase().unwrap();
 
         let TournamentView::Gauntlet(gauntlet) = tournament.view() else {

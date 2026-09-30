@@ -60,6 +60,11 @@ draws as an uninterrupted pool without custom RNG handling.
 The document supports only the current schema version. A future incompatible
 domain change increments that version and may reject old files.
 
+Schema v2 adds `tournament.completed_phases`: `next_phase()` archives each
+finished pools, bracket, and gauntlet phase instead of discarding it, so a save
+keeps every race of the event. v1 files still load with an empty history. Older
+executables reject v2 files rather than silently dropping the history.
+
 ### Load safety
 
 Serde handles syntax, required fields, enum variants, `NonZero` values, and

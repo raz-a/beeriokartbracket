@@ -12,6 +12,7 @@ in the `obs-output` directory beside the executable:
 - `heat.txt`
 - `ruleset.txt`
 - `active_racers.txt` (all active racers, one per line)
+- `up_next_racers.txt` (next pool racers, one per line)
 - `racer_1.txt` through `racer_8.txt`
 - `placement_1.txt` through `placement_8.txt`
 

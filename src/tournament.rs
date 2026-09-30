@@ -630,6 +630,7 @@ mod tests {
                 .iter()
                 .all(|standing| standing.status == PublicStandingStatus::Racing)
         );
+        assert_eq!(pool_state.up_next, expected_pool_order);
 
         tournament.phase = TournamentPhase::Bracket(Box::new(Bracket::new(1, &racers).unwrap()));
         let bracket = tournament.public_snapshot("Test Cup", 9, 1236);

@@ -21,7 +21,7 @@ use crate::view::Viewable;
 /// covered by `t` in `{7, 8}` are rejected.
 const MIN_POOL_RACE_SIZE: usize = 6;
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct FillingBucket {
     participants: Vec<ParticipantId>,
 }
@@ -44,7 +44,7 @@ impl FillingBucket {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct DrainingBucket {
     participants: Vec<ParticipantId>,
     tracker: RaceGroupTracker,
@@ -360,6 +360,31 @@ impl Pool {
             .expect("Race was just created and shouldn't have any collisions or overflow");
     }
 
+    fn next_race_candidate(&self) -> Option<Vec<ParticipantId>> {
+        let current_race = self.current_race.as_ref()?;
+
+        if self.race_format == PoolRaceFormat::BeerioVanillaPairs && self.current_race_index == 0 {
+            return Some(current_race.get_racers().collect());
+        }
+
+        let mut rng = self.rng.clone();
+        let mut current_bucket = self.current_bucket.clone();
+        if let Some(racers) = current_bucket.pop_next_race_candidate(&mut rng) {
+            return Some(racers);
+        }
+
+        if self.current_round + 1 >= self.max_round {
+            return None;
+        }
+
+        let mut next_bucket = self.next_bucket.clone();
+        next_bucket.push_participants(&current_race.get_racers().collect::<Vec<_>>());
+        next_bucket
+            .seal()
+            .expect("A completed round contains every pool participant")
+            .pop_next_race_candidate(&mut rng)
+    }
+
     fn races_per_round(&self) -> usize {
         match self.race_format {
             PoolRaceFormat::AlternatingSingles => 1,
@@ -376,6 +401,7 @@ pub struct PoolView {
     pub races_per_round: usize,
     pub completed_races: Vec<(RaceId, RaceView, usize)>,
     pub current_race: Option<RaceView>,
+    pub up_next: Vec<ParticipantView>,
     pub remaining_racers_in_round: Vec<ParticipantView>,
     pub completed_racers_in_round: Vec<ParticipantView>,
 }
@@ -393,6 +419,12 @@ impl Viewable<PoolView> for Pool {
                 .map(|(id, RaceWithBucket(race, bucket))| (id, race.view(id_map), *bucket))
                 .collect(),
             current_race: self.current_race.as_ref().map(|race| race.view(id_map)),
+            up_next: self
+                .next_race_candidate()
+                .unwrap_or_default()
+                .iter()
+                .map(|racer| racer.view(id_map))
+                .collect(),
             remaining_racers_in_round: self
                 .current_bucket
                 .participants
@@ -646,6 +678,23 @@ mod tests {
         assert_eq!(appearances.len(), ids.len());
         assert!(appearances.values().all(|&count| count == 16));
         assert_eq!(pool.completed_races.len(), 32);
+    }
+
+    #[test]
+    fn next_race_preview_matches_the_scheduler() {
+        let ids = make_participants(16);
+        let mut pool = Pool::new(2, &ids, 42, PoolRaceFormat::AlternatingSingles).unwrap();
+
+        pool.advance().unwrap();
+        for _ in 0..2 {
+            let expected = pool.next_race_candidate().unwrap();
+            complete_race(pool.active_race().unwrap());
+            assert!(!pool.advance().unwrap());
+            assert_eq!(
+                expected,
+                pool.active_race().unwrap().get_racers().collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

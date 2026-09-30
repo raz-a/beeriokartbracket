@@ -40,6 +40,8 @@ pub struct PublicRegistration {
 pub struct PublicPools {
     pub current_round: usize,
     pub total_rounds: usize,
+    #[serde(default)]
+    pub up_next: Vec<String>,
     pub standings: Vec<PublicPoolStanding>,
 }
 
@@ -305,6 +307,11 @@ fn public_pools(view: &PoolView, results: Option<&PoolResultView>) -> PublicPool
     PublicPools {
         current_round: (view.current_round + 1).min(view.max_rounds),
         total_rounds: view.max_rounds,
+        up_next: view
+            .up_next
+            .iter()
+            .map(|participant| participant.name.clone())
+            .collect(),
         standings,
     }
 }

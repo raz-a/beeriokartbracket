@@ -909,6 +909,20 @@ impl TournamentApp {
                                 });
                         });
                 });
+
+                if !pool.up_next.is_empty() {
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new("Up next").strong().color(AMBER));
+                        ui.label(
+                            pool.up_next
+                                .iter()
+                                .map(|participant| participant.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" · "),
+                        );
+                    });
+                }
             }
             None => {
                 ui.add_space(8.0);

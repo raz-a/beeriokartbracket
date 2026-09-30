@@ -51,6 +51,7 @@ interface PoolStanding {
 interface PoolsState {
   current_round: number;
   total_rounds: number;
+  up_next?: string[];
   standings: PoolStanding[];
 }
 
@@ -232,7 +233,15 @@ function renderRegistration(state: RegistrationState): string {
 
 function renderPools(state: PoolsState): string {
   const progress = state.total_rounds === 0 ? 0 : (state.current_round / state.total_rounds) * 100;
+  const upNext = state.up_next ?? [];
   return `
+    ${upNext.length > 0 ? `
+      <section class="up-next" aria-labelledby="up-next-heading">
+        <div><p class="eyebrow">On deck</p><h2 id="up-next-heading">Up next</h2></div>
+        <ol>
+          ${upNext.map((name, index) => `<li><span>${index + 1}</span><strong>${escapeHtml(name)}</strong></li>`).join("")}
+        </ol>
+      </section>` : ""}
     <section class="section-block">
       <div class="section-heading">
         <div><p class="eyebrow">Standings</p><h2>Round ${state.current_round} of ${state.total_rounds}</h2></div>

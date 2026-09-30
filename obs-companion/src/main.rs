@@ -119,6 +119,7 @@ fn render_outputs(snapshot: &PublicTournamentSnapshot) -> BTreeMap<String, Strin
         ("heat.txt".to_owned(), String::new()),
         ("ruleset.txt".to_owned(), String::new()),
         ("active_racers.txt".to_owned(), String::new()),
+        ("up_next_racers.txt".to_owned(), String::new()),
     ]);
 
     for slot in 1..=RACER_FILE_COUNT {
@@ -152,6 +153,10 @@ fn render_outputs(snapshot: &PublicTournamentSnapshot) -> BTreeMap<String, Strin
                 );
             }
         }
+    }
+
+    if let PublicTournamentPhase::Pools(pools) = &snapshot.tournament {
+        outputs.insert("up_next_racers.txt".to_owned(), pools.up_next.join("\n"));
     }
 
     if let PublicTournamentPhase::Complete(results) = &snapshot.tournament {
@@ -222,7 +227,7 @@ fn write_outputs(directory: &Path, outputs: &BTreeMap<String, String>) -> io::Re
 mod tests {
     use super::*;
     use beeriokartbracket::{
-        PublicActiveRace, PublicRacerSlot, PublicRegistration, PublicTournamentResult,
+        PublicActiveRace, PublicPools, PublicRacerSlot, PublicRegistration, PublicTournamentResult,
     };
 
     fn snapshot(
@@ -286,6 +291,21 @@ mod tests {
         assert_eq!(outputs["racer_1.txt"], "Champion");
         assert_eq!(outputs["placement_1.txt"], "1st");
         assert!(outputs["heat.txt"].is_empty());
+    }
+
+    #[test]
+    fn renders_pool_up_next_racers() {
+        let outputs = render_outputs(&snapshot(
+            None,
+            PublicTournamentPhase::Pools(PublicPools {
+                current_round: 1,
+                total_rounds: 8,
+                up_next: vec!["Mario".to_owned(), "Luigi".to_owned()],
+                standings: Vec::new(),
+            }),
+        ));
+
+        assert_eq!(outputs["up_next_racers.txt"], "Mario\nLuigi");
     }
 
     #[test]

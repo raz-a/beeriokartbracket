@@ -459,6 +459,46 @@ svg {
     font-weight: 700;
 }
 
+.up-next {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 24px;
+    align-items: center;
+    padding: 18px 24px;
+    background: #282015;
+    border-left: 4px solid var(--amber);
+}
+
+.up-next h2 {
+    margin-top: 4px;
+    font-size: 24px;
+}
+
+.up-next ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.up-next li {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.up-next li span {
+    color: var(--amber);
+    font: 12px "Mario", Impact, sans-serif;
+}
+
+.up-next li strong {
+    overflow-wrap: anywhere;
+}
+
 .section-block {
     min-width: 0;
     background: rgba(33, 27, 20, .96);
@@ -1132,6 +1172,16 @@ footer img {
     .live-race,
     .section-block {
         padding: 17px 14px;
+    }
+
+    .up-next {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 16px 14px;
+    }
+
+    .up-next ol {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .live-race__heading {
